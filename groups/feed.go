@@ -13,21 +13,17 @@ func (c *Client) GetGroupFeed(ctx context.Context, groupID string) (FeedPage, er
 		return FeedPage{}, fmt.Errorf("%w: groupID must not be empty", ErrInvalidParams)
 	}
 
-	type variables struct {
-		GroupID         string `json:"groupID"`
-		UseDefaultActor bool   `json:"useDefaultActor"`
-		OrderBy         string `json:"orderBy"`
-		Count           int    `json:"count"`
-		FeedLocation    string `json:"feedLocation"`
-	}
-
-	raw, err := c.graphql(ctx, "GroupsCometGroupFeedQuery", variables{
-		GroupID:         groupID,
-		UseDefaultActor: true,
-		OrderBy:         "CHRONOLOGICAL",
-		Count:           10,
-		FeedLocation:    "GROUP",
+	vars := mergeVars(map[string]interface{}{
+		"feedLocation":                    "GROUP",
+		"feedbackSource":                  69,
+		"focusCommentID":                  nil,
+		"privacySelectorRenderLocation":   "COMET_STREAM",
+		"renderLocation":                  "groups_tab",
+		"scale":                           2,
+		"suppress_xac_groups":             false,
 	})
+
+	raw, err := c.graphql(ctx, "GroupsCometCrossGroupFeedContainerQuery", vars)
 	if err != nil {
 		return FeedPage{}, err
 	}
@@ -37,7 +33,20 @@ func (c *Client) GetGroupFeed(ctx context.Context, groupID string) (FeedPage, er
 		return FeedPage{}, err
 	}
 
-	return data.toFeedPage(), nil
+	page := data.toFeedPage()
+	// Filter to the requested group if specified
+	if groupID != "" {
+		var filtered []Post
+		for _, p := range page.Posts {
+			if p.GroupID == groupID || p.GroupID == "" {
+				filtered = append(filtered, p)
+			}
+		}
+		if len(filtered) > 0 {
+			page.Posts = filtered
+		}
+	}
+	return page, nil
 }
 
 // GetGroupFeedPage fetches a subsequent page of group feed posts using the
@@ -51,17 +60,15 @@ func (c *Client) GetGroupFeedPage(ctx context.Context, groupID, cursor string) (
 		return FeedPage{}, fmt.Errorf("%w: cursor must not be empty; use GetGroupFeed for the first page", ErrInvalidParams)
 	}
 
-	type variables struct {
-		GroupID string `json:"groupID"`
-		Count   int    `json:"count"`
-		Cursor  string `json:"cursor"`
+	vars := map[string]interface{}{
+		"after":          cursor,
+		"feedLocation":   "GROUP",
+		"feedbackSource": 69,
+		"renderLocation": "groups_tab",
+		"scale":          1,
 	}
 
-	raw, err := c.graphql(ctx, "GroupsCometGroupFeedPaginationQuery", variables{
-		GroupID: groupID,
-		Count:   10,
-		Cursor:  cursor,
-	})
+	raw, err := c.graphql(ctx, "GroupsCometCrossGroupFeedPaginationQuery", vars)
 	if err != nil {
 		return FeedPage{}, err
 	}

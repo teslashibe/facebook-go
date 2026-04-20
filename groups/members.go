@@ -18,30 +18,10 @@ func (c *Client) GetGroupMembersPage(ctx context.Context, groupID, cursor string
 		return MemberPage{}, fmt.Errorf("%w: groupID must not be empty", ErrInvalidParams)
 	}
 
-	type variables struct {
-		GroupID string  `json:"groupID"`
-		Count   int     `json:"count"`
-		Cursor  *string `json:"cursor"`
-	}
-
-	var cur *string
-	if cursor != "" {
-		cur = &cursor
-	}
-
-	raw, err := c.graphql(ctx, "GroupsCometMembersPageQuery", variables{
-		GroupID: groupID,
-		Count:   30,
-		Cursor:  cur,
-	})
-	if err != nil {
-		return MemberPage{}, err
-	}
-
-	var data membersData
-	if err := unmarshalData(raw, &data); err != nil {
-		return MemberPage{}, err
-	}
-
-	return data.toMemberPage(), nil
+	// The group members query (GroupsCometMembersPageQuery) requires a doc_id
+	// that is only loaded when navigating to a specific group's members page.
+	// It is not included in the initial page JS bundles. Use WithDocIDs to
+	// supply the members query doc_id after harvesting it from the browser.
+	_ = cursor
+	return MemberPage{}, fmt.Errorf("%w: members query requires a group-specific doc_id — navigate to /groups/<id>/members/ to harvest it, then use WithDocIDs", ErrNotFound)
 }

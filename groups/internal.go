@@ -187,10 +187,14 @@ type fbStory struct {
 }
 
 type fbFeedback struct {
-	ID            string           `json:"id"`
-	ReactionCount *fbReactionCount `json:"reaction_count"`
-	CommentCount  *fbCommentCount  `json:"comment_count"`
-	ShareCount    *fbShareCount    `json:"share_count"`
+	ID              string           `json:"id"`
+	ReactionCount   *fbReactionCount `json:"reaction_count"`
+	CommentCount    *fbCommentCount  `json:"comment_count"`
+	ShareCount      *fbShareCount    `json:"share_count"`
+	OwningProfile   *fbActor         `json:"owning_profile"`
+	AssociatedGroup *struct {
+		ID string `json:"id"`
+	} `json:"associated_group"`
 }
 
 type fbAttachment struct {
@@ -275,67 +279,64 @@ func (fc *fbComment) toComment() Comment {
 // Per-query data shapes
 // ---------------------------------------------------------------------------
 
-// --- Search / Discover ---
-
-type searchData struct {
-	SerpResponse *struct {
-		Results *struct {
-			Edges    []searchEdge `json:"edges"`
-			PageInfo *fbPageInfo  `json:"page_info"`
-		} `json:"results"`
-	} `json:"serpResponse"`
-}
-
-type searchEdge struct {
-	Node *struct {
-		StyleRenderer *struct {
-			PrimaryRenderer *struct {
-				Group *fbGroupSearchResult `json:"group"`
-			} `json:"primaryRenderer"`
-		} `json:"style_renderer"`
-	} `json:"node"`
-}
-
-func (d *searchData) groups() []GroupSearchResult {
-	if d.SerpResponse == nil || d.SerpResponse.Results == nil {
-		return nil
-	}
-	out := make([]GroupSearchResult, 0, len(d.SerpResponse.Results.Edges))
-	for _, e := range d.SerpResponse.Results.Edges {
-		if e.Node == nil || e.Node.StyleRenderer == nil ||
-			e.Node.StyleRenderer.PrimaryRenderer == nil ||
-			e.Node.StyleRenderer.PrimaryRenderer.Group == nil {
-			continue
-		}
-		out = append(out, e.Node.StyleRenderer.PrimaryRenderer.Group.toSearchResult())
-	}
-	return out
-}
-
 // --- Discover suggestions ---
+// Response: viewer.categories.discover_tab.units.edges[].node
+// Node types: GroupsTabGroupSuggestionRowUnit (has group), GroupsSuggestionUnit (section header)
 
 type discoverData struct {
 	Viewer *struct {
-		GroupSuggestions *struct {
-			Edges []struct {
-				Node *struct {
-					Group *fbGroupSearchResult `json:"group"`
-				} `json:"node"`
-			} `json:"edges"`
-		} `json:"group_suggestions"`
+		Categories *struct {
+			DiscoverTab *struct {
+				Units *struct {
+					Edges []discoverEdge `json:"edges"`
+				} `json:"units"`
+			} `json:"discover_tab"`
+		} `json:"categories"`
 	} `json:"viewer"`
 }
 
+type discoverEdge struct {
+	Node json.RawMessage `json:"node"`
+}
+
+type discoverGroupRow struct {
+	Typename string `json:"__typename"`
+	Group    *struct {
+		ID             string `json:"id"`
+		Name           string `json:"name"`
+		URL            string `json:"url"`
+		MemberCount    int    `json:"member_count"`
+		ProfilePicture *struct {
+			URI string `json:"uri"`
+		} `json:"profile_picture"`
+	} `json:"group"`
+}
+
 func (d *discoverData) groups() []GroupSearchResult {
-	if d.Viewer == nil || d.Viewer.GroupSuggestions == nil {
+	if d.Viewer == nil || d.Viewer.Categories == nil ||
+		d.Viewer.Categories.DiscoverTab == nil ||
+		d.Viewer.Categories.DiscoverTab.Units == nil {
 		return nil
 	}
-	out := make([]GroupSearchResult, 0, len(d.Viewer.GroupSuggestions.Edges))
-	for _, e := range d.Viewer.GroupSuggestions.Edges {
-		if e.Node == nil || e.Node.Group == nil {
+	var out []GroupSearchResult
+	for _, e := range d.Viewer.Categories.DiscoverTab.Units.Edges {
+		var row discoverGroupRow
+		if err := json.Unmarshal(e.Node, &row); err != nil {
 			continue
 		}
-		out = append(out, e.Node.Group.toSearchResult())
+		if row.Group == nil {
+			continue
+		}
+		r := GroupSearchResult{
+			ID:          row.Group.ID,
+			Name:        row.Group.Name,
+			URL:         row.Group.URL,
+			MemberCount: row.Group.MemberCount,
+		}
+		if row.Group.ProfilePicture != nil {
+			r.CoverURL = row.Group.ProfilePicture.URI
+		}
+		out = append(out, r)
 	}
 	return out
 }
@@ -393,58 +394,82 @@ type groupData struct {
 	Group *fbGroup `json:"group"`
 }
 
-// --- Group feed (first page) ---
+// --- Cross-group feed (first page) ---
+// Response: viewer.groups_tab.cross_group_feed.edges[]
 
 type feedData struct {
-	Group *struct {
-		ID        string `json:"id"`
-		GroupFeed *struct {
-			Edges    []feedEdge  `json:"edges"`
-			PageInfo *fbPageInfo `json:"page_info"`
-		} `json:"group_feed"`
-	} `json:"group"`
+	Viewer *struct {
+		GroupsTab *struct {
+			CrossGroupFeed *struct {
+				Edges    []crossFeedEdge `json:"edges"`
+				PageInfo *fbPageInfo     `json:"page_info"`
+			} `json:"cross_group_feed"`
+		} `json:"groups_tab"`
+	} `json:"viewer"`
 }
 
-type feedEdge struct {
-	Node *struct {
-		Story *fbStory `json:"story"`
-	} `json:"node"`
+type crossFeedEdge struct {
+	Node *crossFeedNode `json:"node"`
+}
+
+type crossFeedNode struct {
+	Typename string      `json:"__typename"`
+	ID       string      `json:"id"`
+	PostID   string      `json:"post_id"`
+	Feedback *fbFeedback `json:"feedback"`
+	Attachments []fbAttachment `json:"attachments"`
 }
 
 func (d *feedData) toFeedPage() FeedPage {
-	if d.Group == nil || d.Group.GroupFeed == nil {
+	if d.Viewer == nil || d.Viewer.GroupsTab == nil || d.Viewer.GroupsTab.CrossGroupFeed == nil {
 		return FeedPage{}
 	}
-	gid := d.Group.ID
+	cgf := d.Viewer.GroupsTab.CrossGroupFeed
 	page := FeedPage{}
-	for _, e := range d.Group.GroupFeed.Edges {
-		if e.Node == nil || e.Node.Story == nil {
+	for _, e := range cgf.Edges {
+		if e.Node == nil {
 			continue
 		}
-		page.Posts = append(page.Posts, e.Node.Story.toPost(gid))
+		p := Post{
+			ID:     e.Node.PostID,
+		}
+		if p.ID == "" {
+			p.ID = e.Node.ID
+		}
+		if e.Node.Feedback != nil {
+			p.FeedbackID = e.Node.Feedback.ID
+			if e.Node.Feedback.OwningProfile != nil {
+				p.AuthorID = e.Node.Feedback.OwningProfile.ID
+				p.AuthorName = e.Node.Feedback.OwningProfile.Name
+			}
+			if e.Node.Feedback.AssociatedGroup != nil {
+				p.GroupID = e.Node.Feedback.AssociatedGroup.ID
+			}
+			if e.Node.Feedback.ReactionCount != nil {
+				p.ReactionCount = e.Node.Feedback.ReactionCount.Count
+			}
+			if e.Node.Feedback.CommentCount != nil {
+				p.CommentCount = e.Node.Feedback.CommentCount.TotalCount
+			}
+			if e.Node.Feedback.ShareCount != nil {
+				p.ShareCount = e.Node.Feedback.ShareCount.Count
+			}
+		}
+		page.Posts = append(page.Posts, p)
 	}
-	if pi := d.Group.GroupFeed.PageInfo; pi != nil {
+	if pi := cgf.PageInfo; pi != nil {
 		page.HasNext = pi.HasNextPage
 		page.NextCursor = pi.EndCursor
 	}
 	return page
 }
 
-// --- Group feed pagination ---
+// --- Cross-group feed pagination ---
 
-type feedPaginationData struct {
-	Group *struct {
-		ID        string `json:"id"`
-		GroupFeed *struct {
-			Edges    []feedEdge  `json:"edges"`
-			PageInfo *fbPageInfo `json:"page_info"`
-		} `json:"group_feed"`
-	} `json:"group"`
-}
+type feedPaginationData feedData
 
 func (d *feedPaginationData) toFeedPage() FeedPage {
-	fd := (*feedData)(d)
-	return fd.toFeedPage()
+	return (*feedData)(d).toFeedPage()
 }
 
 // --- Join / Leave mutations ---

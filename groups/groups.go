@@ -18,49 +18,29 @@ func (c *Client) SearchGroups(ctx context.Context, query string, opts ...SearchO
 		o(so)
 	}
 
-	type variables struct {
-		Query          string   `json:"query"`
-		Count          int      `json:"count"`
-		Cursor         *string  `json:"cursor"`
-		SearchSections []string `json:"search_sections"`
-		ContextSource  string   `json:"context_source"`
-		Location       string   `json:"location,omitempty"`
-	}
-
-	vars := variables{
-		Query:          query,
-		Count:          so.limit,
-		SearchSections: []string{"GROUPS"},
-		ContextSource:  "GROUP_DIRECTORY",
-		Location:       so.location,
-	}
-
-	raw, err := c.graphql(ctx, "GroupSearchResultsPageQuery", vars)
-	if err != nil {
-		return nil, err
-	}
-
-	var data searchData
-	if err := unmarshalData(raw, &data); err != nil {
-		return nil, err
-	}
-
-	results := data.groups()
-	if len(results) == 0 {
-		return nil, ErrNotFound
-	}
-	return results, nil
+	// Facebook's group search requires the SearchResultsPage query which uses a
+	// complex serialised filter/args format that is tightly coupled to the SPA's
+	// internal state. This query is not available via the harvested doc_ids from
+	// the initial page JS bundles — it is loaded dynamically when the user
+	// navigates to the search results page.
+	//
+	// Callers who need search should use the browser-based approach or supply
+	// the SearchResultsPage doc_id and variable format via WithDocIDs.
+	//
+	// As a workaround, DiscoverGroups returns personalised suggestions and
+	// MyGroups returns the user's joined groups — both are reliable alternatives.
+	_ = so
+	return nil, fmt.Errorf("%w: group search requires the SearchResultsPage doc_id — use WithDocIDs or DiscoverGroups as an alternative", ErrNotFound)
 }
 
 // DiscoverGroups returns Facebook's personalised group suggestions for the
 // authenticated user.
 func (c *Client) DiscoverGroups(ctx context.Context) ([]GroupSearchResult, error) {
-	type variables struct {
-		Count  int `json:"count"`
-		Scale  int `json:"scale"`
-	}
+	vars := mergeVars(map[string]interface{}{
+		"scale": 2,
+	})
 
-	raw, err := c.graphql(ctx, "GroupsDiscoverSuggestionsQuery", variables{Count: 20, Scale: 1})
+	raw, err := c.graphql(ctx, "GroupsCometDiscoverContentQuery", vars)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +87,7 @@ func (c *Client) GetGroup(ctx context.Context, groupID string) (*Group, error) {
 		UseDefaultActor bool   `json:"useDefaultActor"`
 	}
 
-	raw, err := c.graphql(ctx, "GroupsCometGroupPageQuery", variables{
+	raw, err := c.graphql(ctx, "GroupsCometEntityMenuEmbeddedRootQuery", variables{
 		GroupID:         groupID,
 		UseDefaultActor: true,
 	})

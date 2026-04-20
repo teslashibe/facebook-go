@@ -83,7 +83,7 @@ func (c *Client) doGraphQL(ctx context.Context, friendlyName, docID string, vars
 	form.Set("__a", "1")
 	form.Set("__req", req64)
 	form.Set("__hs", hs)
-	form.Set("dpr", "1")
+	form.Set("dpr", "2")
 	form.Set("__ccg", "EXCELLENT")
 	form.Set("__rev", rev)
 	if spinS != "" {
@@ -109,6 +109,9 @@ func (c *Client) doGraphQL(ctx context.Context, friendlyName, docID string, vars
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	c.setRequestHeaders(req, friendlyName, lsd)
+	req.Header.Set("Sec-Ch-Ua-Platform", `"macOS"`)
+	req.Header.Set("Sec-Ch-Ua", `"Chromium";v="131", "Not_A Brand";v="24"`)
+	req.Header.Set("Sec-Ch-Ua-Mobile", "?0")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
