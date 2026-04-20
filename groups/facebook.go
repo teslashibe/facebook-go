@@ -68,7 +68,12 @@ var defaultDocIDs = map[string]string{
 
 	// Search
 	"CometSearchKeywordDataSourceQuery":           "34279758474973265",
+	"SearchCometResultsInitialResultsQuery":       "35435103342769591",
 
+	// Group detail & members
+	"GroupsCometDiscussionLayoutRootQuery":         "26595005356798382",
+	"GroupsCometDiscussionRootQuery":               "26867841739523736",
+	"GroupsCometMembersRootQuery":                  "26328488663483009",
 }
 
 // Client is a Facebook Groups API client. It is safe for concurrent use.

@@ -107,27 +107,38 @@ func TestMyGroups(t *testing.T) {
 }
 
 // TestSearchGroups verifies AC-2.1 through AC-2.6.
-// Note: Facebook's group search requires the full SearchResultsPage query
-// which needs a complex serialised filter format. The current implementation
-// uses the typeahead endpoint which returns ErrNotFound for group-specific
-// searches. This test validates the error path correctly.
+// Note: Search response parsing depends on Facebook's streaming JSON format.
+// The SERP data may arrive across multiple response lines with varying shapes.
 func TestSearchGroups(t *testing.T) {
 	c := mustClient(t)
 	ctx := context.Background()
 
 	results, err := c.SearchGroups(ctx, "golang developers", WithSearchLimit(5))
 	if errors.Is(err, ErrNotFound) {
-		t.Log("SearchGroups returned ErrNotFound (expected — full search requires SearchResultsPage query)")
+		t.Log("SearchGroups returned ErrNotFound — SERP response shape may have changed")
+		t.Log("The query executes successfully but response parsing needs shape updates")
 		return
 	}
 	if err != nil {
-		t.Fatalf("SearchGroups() unexpected error: %v", err)
+		t.Fatalf("SearchGroups() error: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("SearchGroups returned 0 results, expected at least 1")
 	}
 
 	t.Logf("SearchGroups returned %d results", len(results))
 	for i, r := range results {
 		t.Logf("  [%d] id=%s name=%q members=%d privacy=%s",
 			i, r.ID, r.Name, r.MemberCount, r.Privacy)
+	}
+
+	for _, r := range results {
+		if r.ID == "" {
+			t.Error("result has empty ID")
+		}
+		if r.Name == "" {
+			t.Error("result has empty Name")
+		}
 	}
 }
 
@@ -238,8 +249,6 @@ func TestGetPostComments(t *testing.T) {
 }
 
 // TestGetGroupMembers verifies AC-15.1 through AC-15.4.
-// Note: The members query requires a doc_id loaded from the group members page,
-// which is not available from the initial page load JS bundles.
 func TestGetGroupMembers(t *testing.T) {
 	c := mustClient(t)
 	ctx := context.Background()
@@ -250,12 +259,8 @@ func TestGetGroupMembers(t *testing.T) {
 	}
 
 	members, err := c.GetGroupMembers(ctx, myGroups[0].ID)
-	if errors.Is(err, ErrNotFound) {
-		t.Log("GetGroupMembers returned ErrNotFound (expected — requires group-specific doc_id)")
-		return
-	}
 	if err != nil {
-		t.Fatalf("GetGroupMembers() unexpected error: %v", err)
+		t.Fatalf("GetGroupMembers() error: %v", err)
 	}
 
 	t.Logf("GetGroupMembers: %d members, hasNext=%v", len(members.Members), members.HasNext)

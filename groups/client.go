@@ -67,6 +67,59 @@ func (c *Client) graphql(ctx context.Context, friendlyName string, variables int
 	return nil, lastErr
 }
 
+// doGraphQLRaw performs a single POST and returns the raw response body
+// (with for(;;); stripped) for callers that need to parse multiple lines.
+func (c *Client) doGraphQLRaw(ctx context.Context, friendlyName, docID string, varsJSON []byte) ([]byte, error) {
+	c.waitForGap(ctx)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
+	dtsg, lsd, rev, hs, hsi, spinT, spinS, jazoest := c.session.snap()
+	req64 := strconv.FormatUint(c.reqCounter.Add(1), 16)
+
+	form := url.Values{}
+	form.Set("av", c.cookies.CUser); form.Set("__user", c.cookies.CUser)
+	form.Set("__a", "1"); form.Set("__req", req64); form.Set("__hs", hs)
+	form.Set("dpr", "2"); form.Set("__ccg", "EXCELLENT"); form.Set("__rev", rev)
+	if spinS != "" { form.Set("__s", spinS) }
+	form.Set("__hsi", hsi); form.Set("__comet_req", "15")
+	form.Set("fb_dtsg", dtsg); form.Set("jazoest", jazoest); form.Set("lsd", lsd)
+	form.Set("__spin_r", rev); form.Set("__spin_b", "trunk"); form.Set("__spin_t", spinT)
+	form.Set("server_timestamps", "true"); form.Set("fb_api_caller_class", "RelayModern")
+	form.Set("fb_api_req_friendly_name", friendlyName)
+	form.Set("variables", string(varsJSON)); form.Set("doc_id", docID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, graphqlEndpoint, strings.NewReader(form.Encode()))
+	if err != nil { return nil, fmt.Errorf("%w: building request: %v", ErrRequestFailed, err) }
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	c.setRequestHeaders(req, friendlyName, lsd)
+	req.Header.Set("Sec-Ch-Ua-Platform", `"macOS"`)
+	req.Header.Set("Sec-Ch-Ua", `"Chromium";v="131", "Not_A Brand";v="24"`)
+	req.Header.Set("Sec-Ch-Ua-Mobile", "?0")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil { return nil, fmt.Errorf("%w: %v", ErrRequestFailed, err) }
+	defer resp.Body.Close()
+
+	switch {
+	case resp.StatusCode == http.StatusOK:
+	case resp.StatusCode == http.StatusUnauthorized: return nil, ErrSessionExpired
+	case resp.StatusCode == http.StatusForbidden: return nil, ErrForbidden
+	case resp.StatusCode == http.StatusNotFound: return nil, ErrNotFound
+	case resp.StatusCode == http.StatusTooManyRequests:
+		wait := parseRetryAfter(resp.Header.Get("Retry-After"), 60*time.Second)
+		time.Sleep(wait)
+		return nil, ErrRateLimited
+	case resp.StatusCode >= 500: return nil, fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)
+	default: return nil, fmt.Errorf("%w: unexpected HTTP %d", ErrRequestFailed, resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil { return nil, fmt.Errorf("%w: reading body: %v", ErrRequestFailed, err) }
+	return stripFBPrefix(body), nil
+}
+
 // doGraphQL performs a single form-encoded POST to /api/graphql/.
 func (c *Client) doGraphQL(ctx context.Context, friendlyName, docID string, varsJSON []byte) (json.RawMessage, error) {
 	c.waitForGap(ctx)
@@ -170,6 +223,48 @@ func (c *Client) doGraphQL(ctx context.Context, friendlyName, docID string, vars
 	}
 
 	return nil, fmt.Errorf("%w: no data in response (body: %s)", ErrRequestFailed, truncate(string(body), 300))
+}
+
+// graphqlAllLines is like graphql but returns ALL data payloads from a
+// multi-line response. Useful for streaming queries (like search) where
+// the results arrive across multiple JSON payloads.
+func (c *Client) graphqlAllLines(ctx context.Context, friendlyName string, variables interface{}) ([]json.RawMessage, error) {
+	docID := c.docID(friendlyName)
+	if docID == "" {
+		return nil, fmt.Errorf("%w: no doc_id registered for %q", ErrInvalidParams, friendlyName)
+	}
+	varsJSON, err := json.Marshal(variables)
+	if err != nil {
+		return nil, fmt.Errorf("%w: marshalling variables: %v", ErrInvalidParams, err)
+	}
+
+	raw, err := c.doGraphQLRaw(ctx, friendlyName, docID, varsJSON)
+	if err != nil {
+		return nil, err
+	}
+
+	var allData []json.RawMessage
+	lines := bytes.Split(raw, []byte("\n"))
+	for _, line := range lines {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var envelope gqlEnvelope
+		if json.Unmarshal(line, &envelope) != nil {
+			continue
+		}
+		if err := envelope.err(); err != nil {
+			return nil, err
+		}
+		if len(envelope.Data) > 0 && string(envelope.Data) != "null" {
+			allData = append(allData, envelope.Data)
+		}
+	}
+	if len(allData) == 0 {
+		return nil, fmt.Errorf("%w: no data in multi-line response", ErrRequestFailed)
+	}
+	return allData, nil
 }
 
 // waitForGap enforces the leaky-bucket minimum request gap per client.

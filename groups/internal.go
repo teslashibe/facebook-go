@@ -557,10 +557,73 @@ func (d *commentsData) toCommentPage() CommentPage {
 	return page
 }
 
+// --- Search ---
+
+type searchData struct {
+	SerpResponse *struct {
+		Results *struct {
+			Edges []searchEdge `json:"edges"`
+		} `json:"results"`
+	} `json:"serpResponse"`
+}
+
+type searchEdge struct {
+	Node *struct {
+		RenderingStrategy *struct {
+			ViewModel *struct {
+				Profile *struct {
+					Typename       string `json:"__typename"`
+					ID             string `json:"id"`
+					Name           string `json:"name"`
+					URL            string `json:"url"`
+					ProfilePicture *struct {
+						URI string `json:"uri"`
+					} `json:"profile_picture"`
+				} `json:"profile"`
+			} `json:"view_model"`
+		} `json:"rendering_strategy"`
+	} `json:"node"`
+}
+
+func (d *searchData) groups() []GroupSearchResult {
+	if d.SerpResponse == nil || d.SerpResponse.Results == nil {
+		return nil
+	}
+	var out []GroupSearchResult
+	for _, e := range d.SerpResponse.Results.Edges {
+		if e.Node == nil || e.Node.RenderingStrategy == nil ||
+			e.Node.RenderingStrategy.ViewModel == nil ||
+			e.Node.RenderingStrategy.ViewModel.Profile == nil {
+			continue
+		}
+		p := e.Node.RenderingStrategy.ViewModel.Profile
+		if p.Typename != "" && p.Typename != "Group" {
+			continue
+		}
+		r := GroupSearchResult{
+			ID:   p.ID,
+			Name: p.Name,
+			URL:  p.URL,
+		}
+		if p.ProfilePicture != nil {
+			r.CoverURL = p.ProfilePicture.URI
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
 // --- Members ---
 
 type membersData struct {
 	Group *struct {
+		ID                  string `json:"id"`
+		GroupMemberProfiles *struct {
+			Count int `json:"count"`
+		} `json:"group_member_profiles"`
+		AllActiveMembers *struct {
+			Count int `json:"count"`
+		} `json:"all_active_members"`
 		NewMembers *struct {
 			Edges    []memberEdge `json:"edges"`
 			PageInfo *fbPageInfo  `json:"page_info"`
@@ -573,24 +636,39 @@ type memberEdge struct {
 }
 
 func (d *membersData) toMemberPage() MemberPage {
-	if d.Group == nil || d.Group.NewMembers == nil {
+	if d.Group == nil {
 		return MemberPage{}
 	}
 	page := MemberPage{}
-	for _, e := range d.Group.NewMembers.Edges {
-		if e.Node == nil {
-			continue
+	if d.Group.NewMembers != nil {
+		for _, e := range d.Group.NewMembers.Edges {
+			if e.Node == nil {
+				continue
+			}
+			page.Members = append(page.Members, Member{
+				ID:   e.Node.ID,
+				Name: e.Node.Name,
+			})
 		}
-		page.Members = append(page.Members, Member{
-			ID:   e.Node.ID,
-			Name: e.Node.Name,
-		})
-	}
-	if pi := d.Group.NewMembers.PageInfo; pi != nil {
-		page.HasNext = pi.HasNextPage
-		page.NextCursor = pi.EndCursor
+		if pi := d.Group.NewMembers.PageInfo; pi != nil {
+			page.HasNext = pi.HasNextPage
+			page.NextCursor = pi.EndCursor
+		}
 	}
 	return page
+}
+
+func (d *membersData) totalCount() int {
+	if d.Group == nil {
+		return 0
+	}
+	if d.Group.AllActiveMembers != nil && d.Group.AllActiveMembers.Count > 0 {
+		return d.Group.AllActiveMembers.Count
+	}
+	if d.Group.GroupMemberProfiles != nil {
+		return d.Group.GroupMemberProfiles.Count
+	}
+	return 0
 }
 
 // unmarshalData is a helper that decodes a json.RawMessage into v.

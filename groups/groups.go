@@ -2,6 +2,7 @@ package groups
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -18,19 +19,57 @@ func (c *Client) SearchGroups(ctx context.Context, query string, opts ...SearchO
 		o(so)
 	}
 
-	// Facebook's group search requires the SearchResultsPage query which uses a
-	// complex serialised filter/args format that is tightly coupled to the SPA's
-	// internal state. This query is not available via the harvested doc_ids from
-	// the initial page JS bundles — it is loaded dynamically when the user
-	// navigates to the search results page.
-	//
-	// Callers who need search should use the browser-based approach or supply
-	// the SearchResultsPage doc_id and variable format via WithDocIDs.
-	//
-	// As a workaround, DiscoverGroups returns personalised suggestions and
-	// MyGroups returns the user's joined groups — both are reliable alternatives.
-	_ = so
-	return nil, fmt.Errorf("%w: group search requires the SearchResultsPage doc_id — use WithDocIDs or DiscoverGroups as an alternative", ErrNotFound)
+	vars := mergeVars(map[string]interface{}{
+		"count":            so.limit,
+		"allow_streaming":  false,
+		"args": map[string]interface{}{
+			"callsite": "COMET_GLOBAL_SEARCH",
+			"config": map[string]interface{}{
+				"exact_match":            false,
+				"high_confidence_config": nil,
+				"intercept_config":       nil,
+				"sts_disambiguation":     nil,
+				"watch_config":           nil,
+			},
+			"experience": map[string]interface{}{
+				"encoded_server_defined_params": nil,
+				"fbid":                          nil,
+				"type":                          "GROUPS_TAB",
+			},
+			"filters": []interface{}{},
+			"text":    query,
+		},
+		"cursor":                     nil,
+		"feedLocation":               "SEARCH",
+		"feedbackSource":             23,
+		"fetch_filters":              true,
+		"focusCommentID":             nil,
+		"locale":                     nil,
+		"privacySelectorRenderLocation": "COMET_STREAM",
+		"renderLocation":             "search_results_page",
+		"scale":                      2,
+		"stream_initial_count":       0,
+		"useDefaultActor":            false,
+	})
+
+	raw, err := c.graphqlAllLines(ctx, "SearchCometResultsInitialResultsQuery", vars)
+	if err != nil {
+		return nil, err
+	}
+
+	var allResults []GroupSearchResult
+	for _, line := range raw {
+		var data searchData
+		if json.Unmarshal(line, &data) != nil {
+			continue
+		}
+		allResults = append(allResults, data.groups()...)
+	}
+
+	if len(allResults) == 0 {
+		return nil, ErrNotFound
+	}
+	return allResults, nil
 }
 
 // DiscoverGroups returns Facebook's personalised group suggestions for the
@@ -82,15 +121,13 @@ func (c *Client) GetGroup(ctx context.Context, groupID string) (*Group, error) {
 		return nil, fmt.Errorf("%w: groupID must not be empty", ErrInvalidParams)
 	}
 
-	type variables struct {
-		GroupID         string `json:"groupID"`
-		UseDefaultActor bool   `json:"useDefaultActor"`
+	vars := map[string]interface{}{
+		"groupID": groupID,
+		"scale":   2,
+		"__relay_internal__pv__GroupsCometGroupChatLazyLoadLastMessageSnippetrelayprovider": false,
 	}
 
-	raw, err := c.graphql(ctx, "GroupsCometEntityMenuEmbeddedRootQuery", variables{
-		GroupID:         groupID,
-		UseDefaultActor: true,
-	})
+	raw, err := c.graphql(ctx, "GroupsCometDiscussionLayoutRootQuery", vars)
 	if err != nil {
 		return nil, err
 	}

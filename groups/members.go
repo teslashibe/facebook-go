@@ -18,10 +18,27 @@ func (c *Client) GetGroupMembersPage(ctx context.Context, groupID, cursor string
 		return MemberPage{}, fmt.Errorf("%w: groupID must not be empty", ErrInvalidParams)
 	}
 
-	// The group members query (GroupsCometMembersPageQuery) requires a doc_id
-	// that is only loaded when navigating to a specific group's members page.
-	// It is not included in the initial page JS bundles. Use WithDocIDs to
-	// supply the members query doc_id after harvesting it from the browser.
-	_ = cursor
-	return MemberPage{}, fmt.Errorf("%w: members query requires a group-specific doc_id — navigate to /groups/<id>/members/ to harvest it, then use WithDocIDs", ErrNotFound)
+	vars := map[string]interface{}{
+		"groupID": groupID,
+		"scale":   2,
+	}
+	if cursor != "" {
+		vars["cursor"] = cursor
+	}
+
+	raw, err := c.graphql(ctx, "GroupsCometMembersRootQuery", vars)
+	if err != nil {
+		return MemberPage{}, err
+	}
+
+	var data membersData
+	if err := unmarshalData(raw, &data); err != nil {
+		return MemberPage{}, err
+	}
+
+	page := data.toMemberPage()
+	if count := data.totalCount(); count > 0 && len(page.Members) == 0 {
+		page.Members = make([]Member, 0)
+	}
+	return page, nil
 }
