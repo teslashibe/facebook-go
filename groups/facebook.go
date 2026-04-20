@@ -1,0 +1,277 @@
+// Package groups provides a Go client for the Facebook Groups surface.
+//
+// Authentication is cookie-based. Pass the six session cookies obtained from a
+// logged-in browser session to [New]. The client performs a one-time session
+// bootstrap on construction to extract the CSRF tokens required by every
+// GraphQL request.
+//
+// Example:
+//
+//	c, err := groups.New(groups.Cookies{
+//	    XS:    "39%3AW11l...",
+//	    CUser: "1226944",
+//	    SB:    "YXzYZl6g...",
+//	    DATR:  "TCeNaTXI...",
+//	    FR:    "1pRdJlAZ...",
+//	    PSL:   "1",
+//	})
+//	results, err := c.SearchGroups(ctx, "golang developers")
+package groups
+
+import (
+	"fmt"
+	"net/http"
+	"net/url"
+	"sync/atomic"
+	"time"
+)
+
+const (
+	defaultUserAgent  = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+	defaultMaxRetries = 3
+	defaultRetryBase  = 500 * time.Millisecond
+	defaultMinGap     = 800 * time.Millisecond
+	graphqlEndpoint   = "https://www.facebook.com/api/graphql/"
+	referer           = "https://www.facebook.com/"
+	origin            = "https://www.facebook.com"
+	asbdID            = "129477"
+)
+
+// Default doc_ids keyed by the Facebook-friendly query name.
+// These rotate with each code deploy; override via WithDocIDs.
+var defaultDocIDs = map[string]string{
+	"GroupsHomeNewQuery":                    "7810301489006745",
+	"GroupSearchResultsPageQuery":           "8589379677810700",
+	"GroupsDiscoverSuggestionsQuery":        "6705661989513295",
+	"GroupsCometGroupPageQuery":             "4242218965874992",
+	"GroupsCometGroupFeedQuery":             "7265828503443504",
+	"GroupsCometGroupFeedPaginationQuery":   "8148491931922494",
+	"GroupJoinMutation":                     "4556533284398215",
+	"GroupLeaveMutation":                    "5024190864356295",
+	"GroupCreateMutation":                   "6012044985567001",
+	"ComposerStoryCreateMutation":           "7737694812917255",
+	"CommentCreateMutation":                 "5418265591589706",
+	"CometUFIFeedbackReactMutation":         "6996109963813789",
+	"CommentsListComponentPaginationQuery":  "9060882280617430",
+	"GroupsCometMembersPageQuery":           "5100470406669740",
+	"CometSinglePostRouteQuery":             "6841468425963700",
+}
+
+// Client is a Facebook Groups API client. It is safe for concurrent use.
+type Client struct {
+	cookies    Cookies
+	httpClient *http.Client
+	userAgent  string
+	docIDs     map[string]string
+	maxRetries int
+	retryBase  time.Duration
+	minGap     time.Duration
+
+	reqCounter atomic.Uint64
+	session    *sessionState
+
+	// lastReq guards the leaky-bucket rate limiter.
+	lastReqCh chan struct{}
+	lastReqAt time.Time
+}
+
+// New constructs a Client and performs the session bootstrap immediately.
+// It returns ErrInvalidAuth if Cookies.CUser or Cookies.XS is empty.
+// It returns ErrUnauthorized if the bootstrap page cannot supply valid tokens.
+func New(cookies Cookies, opts ...Option) (*Client, error) {
+	if cookies.CUser == "" || cookies.XS == "" {
+		return nil, fmt.Errorf("%w: CUser and XS must both be non-empty", ErrInvalidAuth)
+	}
+
+	docIDs := make(map[string]string, len(defaultDocIDs))
+	for k, v := range defaultDocIDs {
+		docIDs[k] = v
+	}
+
+	c := &Client{
+		cookies:    cookies,
+		httpClient: &http.Client{Timeout: 30 * time.Second},
+		userAgent:  defaultUserAgent,
+		docIDs:     docIDs,
+		maxRetries: defaultMaxRetries,
+		retryBase:  defaultRetryBase,
+		minGap:     defaultMinGap,
+		session:    &sessionState{},
+		lastReqCh:  make(chan struct{}, 1),
+	}
+	c.lastReqCh <- struct{}{}
+
+	for _, o := range opts {
+		o(c)
+	}
+
+	if err := c.bootstrap(); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// Option configures a Client.
+type Option func(*Client)
+
+// WithUserAgent overrides the default Chrome User-Agent string.
+func WithUserAgent(ua string) Option {
+	return func(c *Client) { c.userAgent = ua }
+}
+
+// WithDocIDs overrides one or more GraphQL doc_ids. The key is the Facebook
+// friendly query name (e.g. "GroupsCometGroupFeedQuery").
+func WithDocIDs(overrides map[string]string) Option {
+	return func(c *Client) {
+		for k, v := range overrides {
+			c.docIDs[k] = v
+		}
+	}
+}
+
+// WithRetry configures retry behaviour.
+// Default: 3 attempts, 500ms exponential base (500ms → 1s → 2s).
+// Set maxAttempts to 0 or 1 to disable retries.
+func WithRetry(maxAttempts int, base time.Duration) Option {
+	return func(c *Client) {
+		c.maxRetries = maxAttempts
+		c.retryBase = base
+	}
+}
+
+// WithHTTPClient replaces the default http.Client. Nil is ignored.
+func WithHTTPClient(hc *http.Client) Option {
+	return func(c *Client) {
+		if hc != nil {
+			c.httpClient = hc
+		}
+	}
+}
+
+// WithProxy routes all HTTP traffic through the given proxy URL
+// (e.g. "http://user:pass@host:port").
+func WithProxy(proxyURL string) Option {
+	return func(c *Client) {
+		parsed, err := url.Parse(proxyURL)
+		if err != nil {
+			return
+		}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = http.ProxyURL(parsed)
+		c.httpClient = &http.Client{
+			Timeout:   c.httpClient.Timeout,
+			Transport: transport,
+		}
+	}
+}
+
+// WithMinRequestGap sets the minimum time between consecutive requests.
+// Default: 800ms. Lower values risk triggering Facebook's rate limiter.
+func WithMinRequestGap(d time.Duration) Option {
+	return func(c *Client) { c.minGap = d }
+}
+
+// docID returns the doc_id for the given friendly name.
+func (c *Client) docID(name string) string {
+	if id, ok := c.docIDs[name]; ok {
+		return id
+	}
+	return ""
+}
+
+// cookieHeader builds the Cookie header value from the Cookies struct.
+func (c *Client) cookieHeader() string {
+	jar := ""
+	add := func(name, val string) {
+		if val == "" {
+			return
+		}
+		if jar != "" {
+			jar += "; "
+		}
+		jar += name + "=" + val
+	}
+	add("sb", c.cookies.SB)
+	add("datr", c.cookies.DATR)
+	add("c_user", c.cookies.CUser)
+	add("xs", c.cookies.XS)
+	add("fr", c.cookies.FR)
+	add("ps_l", c.cookies.PSL)
+	add("ps_n", c.cookies.PSN)
+	return jar
+}
+
+// setRequestHeaders sets the common headers (User-Agent, cookies, etc.) on req.
+// friendlyName and lsd are optional and only used for GraphQL POST requests.
+func (c *Client) setRequestHeaders(req *http.Request, friendlyName, lsd string) {
+	req.Header.Set("User-Agent", c.userAgent)
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Referer", referer)
+	req.Header.Set("Origin", origin)
+	req.Header.Set("Cookie", c.cookieHeader())
+	if friendlyName != "" {
+		req.Header.Set("X-FB-Friendly-Name", friendlyName)
+	}
+	if lsd != "" {
+		req.Header.Set("X-FB-LSD", lsd)
+	}
+	if friendlyName != "" || lsd != "" {
+		req.Header.Set("X-ASBD-ID", asbdID)
+	}
+}
+
+// SearchOption configures SearchGroups.
+type SearchOption func(*searchOptions)
+
+type searchOptions struct {
+	location string
+	limit    int
+}
+
+// WithSearchLocation filters group search results by city or region name.
+func WithSearchLocation(cityOrRegion string) SearchOption {
+	return func(o *searchOptions) { o.location = cityOrRegion }
+}
+
+// WithSearchLimit caps the number of groups returned. Default: 20.
+func WithSearchLimit(n int) SearchOption {
+	return func(o *searchOptions) { o.limit = n }
+}
+
+// PostOption configures CreatePost.
+type PostOption func(*postOptions)
+
+type postOptions struct {
+	attachmentURL string
+}
+
+// WithPostAttachmentURL appends a link attachment to the created post.
+func WithPostAttachmentURL(rawURL string) PostOption {
+	return func(o *postOptions) { o.attachmentURL = rawURL }
+}
+
+// TrendOption configures ScrapeGroupTrends.
+type TrendOption func(*trendOptions)
+
+type trendOptions struct {
+	maxPosts  int
+	topN      int
+	stopWords []string
+}
+
+// WithTrendMaxPosts caps the total posts fetched for trend analysis. Default: 200.
+func WithTrendMaxPosts(n int) TrendOption {
+	return func(o *trendOptions) { o.maxPosts = n }
+}
+
+// WithTrendTopN sets the number of top keywords and hashtags returned. Default: 20.
+func WithTrendTopN(n int) TrendOption {
+	return func(o *trendOptions) { o.topN = n }
+}
+
+// WithTrendStopWords appends domain-specific stop words to the bundled English
+// stop list before keyword extraction.
+func WithTrendStopWords(words []string) TrendOption {
+	return func(o *trendOptions) { o.stopWords = append(o.stopWords, words...) }
+}
