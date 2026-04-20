@@ -143,16 +143,30 @@ func (c *Client) doGraphQL(ctx context.Context, friendlyName, docID string, vars
 	// Strip the XSS guard prefix that Facebook prepends to every response.
 	body = stripFBPrefix(body)
 
-	var envelope gqlEnvelope
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		return nil, fmt.Errorf("%w: decoding envelope: %v (body: %s)", ErrRequestFailed, err, truncate(string(body), 200))
+	// Facebook sometimes returns multi-line JSON (one JSON object per line).
+	// Parse the first non-empty JSON object that contains "data".
+	lines := bytes.Split(body, []byte("\n"))
+	for _, line := range lines {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+
+		var envelope gqlEnvelope
+		if err := json.Unmarshal(line, &envelope); err != nil {
+			continue
+		}
+
+		if err := envelope.err(); err != nil {
+			return nil, err
+		}
+
+		if len(envelope.Data) > 0 && string(envelope.Data) != "null" {
+			return envelope.Data, nil
+		}
 	}
 
-	if err := envelope.err(); err != nil {
-		return nil, err
-	}
-
-	return envelope.Data, nil
+	return nil, fmt.Errorf("%w: no data in response (body: %s)", ErrRequestFailed, truncate(string(body), 300))
 }
 
 // waitForGap enforces the leaky-bucket minimum request gap per client.

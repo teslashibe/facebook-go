@@ -28,13 +28,15 @@ type sessionState struct {
 
 // Regexes for token extraction from the HTML page source.
 var (
-	reDTSG  = regexp.MustCompile(`"DTSGInitialData"[^{]*{"token":"([^"]+)"`)
-	reLSD   = regexp.MustCompile(`"LSD"[^{]*{"token":"([^"]+)"`)
-	reRev   = regexp.MustCompile(`"client_revision"\s*:\s*(\d+)`)
-	reHs    = regexp.MustCompile(`"haste_session"\s*:\s*"([^"]+)"`)
-	reHsi   = regexp.MustCompile(`"hsi"\s*:\s*"(\d+)"`)
-	reSpinT = regexp.MustCompile(`"spin_t"\s*:\s*(\d+)`)
-	reSpinS = regexp.MustCompile(`"spin_s"\s*:\s*"([^"]+)"`)
+	reDTSG    = regexp.MustCompile(`"DTSGInitialData"[^{]*\{"token":"([^"]+)"`)
+	reLSD     = regexp.MustCompile(`"LSD"[^{]*\{"token":"([^"]+)"`)
+	reRev     = regexp.MustCompile(`"client_revision"\s*:\s*(\d+)`)
+	reHs      = regexp.MustCompile(`"haste_session"\s*:\s*"([^"]+)"`)
+	reHsi     = regexp.MustCompile(`"hsi"\s*:\s*"(\d+)"`)
+	reSpinT   = regexp.MustCompile(`"_?_?spin_t"\s*:\s*(\d+)`)
+	reSpinS   = regexp.MustCompile(`"_?_?spin_s"\s*:\s*"([^"]+)"`)
+	reDocID   = regexp.MustCompile(`"queryID"\s*:\s*"(\d{10,})"`)
+	reQName   = regexp.MustCompile(`"((?:Groups|Comet|Comment|Composer|Feedback|Member|UFI)[A-Za-z_]+(?:Query|Mutation))"`)
 )
 
 // bootstrap performs a single authenticated GET to /groups/feed/ and extracts
@@ -44,7 +46,14 @@ func (c *Client) bootstrap() error {
 	if err != nil {
 		return fmt.Errorf("%w: building bootstrap request: %v", ErrRequestFailed, err)
 	}
-	c.setRequestHeaders(req, "", "")
+	req.Header.Set("User-Agent", c.userAgent)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Site", "none")
+	req.Header.Set("Sec-Fetch-User", "?1")
+	req.Header.Set("Cookie", c.cookieHeader())
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
