@@ -344,25 +344,44 @@ func (d *discoverData) groups() []GroupSearchResult {
 
 type myGroupsData struct {
 	Viewer *struct {
-		JoiningGroups *struct {
-			Edges []struct {
-				Node *fbGroup `json:"node"`
-			} `json:"edges"`
-		} `json:"joining_groups"`
+		AllJoinedGroups *struct {
+			TabGroupsList *struct {
+				Edges []struct {
+					Node *fbMyGroupNode `json:"node"`
+				} `json:"edges"`
+			} `json:"tab_groups_list"`
+		} `json:"all_joined_groups"`
 	} `json:"viewer"`
 }
 
+type fbMyGroupNode struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	URL            string `json:"url"`
+	ProfilePicture *struct {
+		URI string `json:"uri"`
+	} `json:"profile_picture"`
+}
+
 func (d *myGroupsData) groups() []Group {
-	if d.Viewer == nil || d.Viewer.JoiningGroups == nil {
+	if d.Viewer == nil || d.Viewer.AllJoinedGroups == nil || d.Viewer.AllJoinedGroups.TabGroupsList == nil {
 		return nil
 	}
-	out := make([]Group, 0, len(d.Viewer.JoiningGroups.Edges))
-	for _, e := range d.Viewer.JoiningGroups.Edges {
+	edges := d.Viewer.AllJoinedGroups.TabGroupsList.Edges
+	out := make([]Group, 0, len(edges))
+	for _, e := range edges {
 		if e.Node == nil {
 			continue
 		}
-		g := e.Node.toGroup()
-		g.Joined = true
+		g := Group{
+			ID:     e.Node.ID,
+			Name:   e.Node.Name,
+			URL:    e.Node.URL,
+			Joined: true,
+		}
+		if e.Node.ProfilePicture != nil {
+			g.CoverURL = e.Node.ProfilePicture.URI
+		}
 		out = append(out, g)
 	}
 	return out

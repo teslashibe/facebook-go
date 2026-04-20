@@ -76,11 +76,12 @@ func (c *Client) DiscoverGroups(ctx context.Context) ([]GroupSearchResult, error
 // MyGroups returns all groups the authenticated user is a member of, including
 // those with pending approval (PendingJoin: true).
 func (c *Client) MyGroups(ctx context.Context) ([]Group, error) {
-	type variables struct {
-		Count int `json:"count"`
+	vars := map[string]interface{}{
+		"ordering": []string{"integrity_signals"},
+		"scale":    1,
 	}
 
-	raw, err := c.graphql(ctx, "GroupsHomeNewQuery", variables{Count: 50})
+	raw, err := c.graphql(ctx, "GroupsCometJoinsRootQuery", vars)
 	if err != nil {
 		return nil, err
 	}

@@ -22,22 +22,53 @@ const (
 
 // Default doc_ids keyed by the Facebook-friendly query name.
 // These rotate with each code deploy; override via WithDocIDs.
+// Default doc_ids harvested from live Facebook JS bundles (2026-04-20).
+// These rotate with each code deploy; override via WithDocIDs.
 var defaultDocIDs = map[string]string{
-	"GroupsHomeNewQuery":                    "7810301489006745",
-	"GroupSearchResultsPageQuery":           "8589379677810700",
-	"GroupsDiscoverSuggestionsQuery":        "6705661989513295",
-	"GroupsCometGroupPageQuery":             "4242218965874992",
-	"GroupsCometGroupFeedQuery":             "7265828503443504",
-	"GroupsCometGroupFeedPaginationQuery":   "8148491931922494",
-	"GroupJoinMutation":                     "4556533284398215",
-	"GroupLeaveMutation":                    "5024190864356295",
-	"GroupCreateMutation":                   "6012044985567001",
-	"ComposerStoryCreateMutation":           "7737694812917255",
-	"CommentCreateMutation":                 "5418265591589706",
-	"CometUFIFeedbackReactMutation":         "6996109963813789",
-	"CommentsListComponentPaginationQuery":  "9060882280617430",
-	"GroupsCometMembersPageQuery":           "5100470406669740",
-	"CometSinglePostRouteQuery":             "6841468425963700",
+	// Groups — core
+	"GroupsCometCrossGroupFeedContainerQuery":    "26735348219462271",
+	"GroupsCometCrossGroupFeedPaginationQuery":   "26527780253581396",
+	"GroupsCometLeftRailContainerQuery":          "31152611061018930",
+	"GroupsCometJoinsRootQuery":                   "24648931168042404",
+	"GroupsCometDiscoverContentQuery":            "25947833531582461",
+	"GroupsCometCreateRootQuery":                 "26545572188428154",
+	"GroupsCometSettingMenuQuery":                "9746765062081053",
+	"GroupsCometMoreActionMenuQuery":             "26476435205301604",
+	"GroupsCometEntityMenuEmbeddedRootQuery":     "26566099453080408",
+	"GroupsCometRecAffordanceSectionQuery":       "26227921180209081",
+	"GroupsCometGroupRuleEntityDialogQuery":      "25942555452109877",
+	"GroupsCometHeaderInviteMenuQuery":           "34670067305939872",
+	"GroupsCometMembershipQuestionsPreloadedDialogQuery": "26323827953971452",
+
+	// Groups — pagination & joined
+	"GroupsCometAllJoinedGroupsSectionPaginationQuery":  "9974006939348139",
+	"GroupsCometPendingGroupJoinsSectionPaginationQuery": "9924911067556167",
+	"GroupsCometCategoriesSectionCategoriesRefetchQuery": "26179397388389630",
+	"GroupsCometCategoriesSectionMoreSuggestionsRefetchQuery": "24774907385540983",
+	"GroupsLeftRailYourGroupsPaginatedQuery":            "9658982227546884",
+	"GroupsLeftRailGroupsYouManagePaginatedQuery":       "10000015690112057",
+
+	// Feed & posts
+	"CometModernHomeFeedQuery":                   "35430709819853581",
+	"CometSinglePostDialogContentQuery":          "27091356863854596",
+	"CometFeedStoryMenuQuery":                    "26578139061874750",
+	"CometFeedInlineComposerQuery":               "26472956975672575",
+	"ProfileCometComposerRootQuery":              "26292641347064220",
+	"ProfileCometTimelineFeedQuery":              "26484140144542166",
+
+	// Comments & reactions
+	"useCometUFICreateCommentMutation":           "26507776998841912",
+	"CometUFICommentRefetchQuery":                "26577964715169700",
+	"CometUFICommentMenuQuery":                   "26230165949984969",
+	"CometUFIReactionsDialogQuery":               "33437545572555426",
+
+	// Groups — utility
+	"GroupsCometUFIAnonActorSwitcherMenuQuery":    "25736011312767229",
+	"useGroupHideSuggestionMutation":              "9454440231347992",
+
+	// Search
+	"CometSearchKeywordDataSourceQuery":           "34279758474973265",
+
 }
 
 // Client is a Facebook Groups API client. It is safe for concurrent use.
@@ -190,6 +221,9 @@ func (c *Client) setRequestHeaders(req *http.Request, friendlyName, lsd string) 
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	req.Header.Set("Referer", referer)
 	req.Header.Set("Origin", origin)
+	req.Header.Set("Sec-Fetch-Dest", "empty")
+	req.Header.Set("Sec-Fetch-Mode", "cors")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	req.Header.Set("Cookie", c.cookieHeader())
 	if friendlyName != "" {
 		req.Header.Set("X-FB-Friendly-Name", friendlyName)
