@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -11,7 +12,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -34,6 +34,7 @@ func (c *Client) graphql(ctx context.Context, friendlyName string, variables int
 	}
 
 	var lastErr error
+	bootstrapped := false
 	for i := 0; i < attempts; i++ {
 		if i > 0 {
 			wait := c.retryBase * time.Duration(math.Pow(2, float64(i-1)))
@@ -49,14 +50,16 @@ func (c *Client) graphql(ctx context.Context, friendlyName string, variables int
 			return data, nil
 		}
 
-		// Non-retriable errors bail immediately.
-		if isNonRetriable(err) {
-			// On session expiry, re-bootstrap once then retry the whole loop.
-			if strings.Contains(err.Error(), ErrSessionExpired.Error()) {
-				if boostrapErr := c.bootstrap(); boostrapErr == nil {
-					continue
-				}
+		// On session expiry, re-bootstrap exactly once then retry.
+		if errors.Is(err, ErrSessionExpired) && !bootstrapped {
+			bootstrapped = true
+			if bErr := c.bootstrap(); bErr == nil {
+				continue
 			}
+			return nil, err
+		}
+
+		if isNonRetriable(err) {
 			return nil, err
 		}
 		lastErr = err
@@ -152,27 +155,25 @@ func (c *Client) doGraphQL(ctx context.Context, friendlyName, docID string, vars
 	return envelope.Data, nil
 }
 
-// waitForGap enforces the leaky-bucket minimum request gap. It sleeps until
-// minGap has elapsed since the last request, then updates lastReqAt.
-var gapMu sync.Mutex
-
+// waitForGap enforces the leaky-bucket minimum request gap per client.
+// It reserves the next slot atomically, releases the lock, and then sleeps
+// independently so concurrent callers don't serialise behind one in-flight wait.
 func (c *Client) waitForGap(ctx context.Context) {
-	gapMu.Lock()
-	defer gapMu.Unlock()
+	c.gapMu.Lock()
+	now := time.Now()
+	nextSlot := c.lastReqAt.Add(c.minGap)
+	if now.After(nextSlot) {
+		nextSlot = now
+	}
+	c.lastReqAt = nextSlot
+	c.gapMu.Unlock()
 
-	since := time.Since(c.lastReqAt)
-	if since < c.minGap {
-		wait := c.minGap - since
-		gapMu.Unlock()
+	if wait := time.Until(nextSlot); wait > 0 {
 		select {
 		case <-ctx.Done():
-			gapMu.Lock()
-			return
 		case <-time.After(wait):
 		}
-		gapMu.Lock()
 	}
-	c.lastReqAt = time.Now()
 }
 
 // stripFBPrefix removes the "for (;;);" prefix Facebook adds for XSS protection.
@@ -200,18 +201,17 @@ func parseRetryAfter(val string, fallback time.Duration) time.Duration {
 	return fallback
 }
 
-// isNonRetriable reports whether err should not be retried.
+// isNonRetriable reports whether err should not be retried (4xx-class errors).
 func isNonRetriable(err error) bool {
-	switch {
-	case strings.Contains(err.Error(), ErrInvalidAuth.Error()),
-		strings.Contains(err.Error(), ErrUnauthorized.Error()),
-		strings.Contains(err.Error(), ErrForbidden.Error()),
-		strings.Contains(err.Error(), ErrNotFound.Error()),
-		strings.Contains(err.Error(), ErrInvalidParams.Error()),
-		strings.Contains(err.Error(), ErrDocIDStale.Error()):
-		return true
-	}
-	return false
+	return errors.Is(err, ErrInvalidAuth) ||
+		errors.Is(err, ErrUnauthorized) ||
+		errors.Is(err, ErrForbidden) ||
+		errors.Is(err, ErrNotFound) ||
+		errors.Is(err, ErrInvalidParams) ||
+		errors.Is(err, ErrDocIDStale) ||
+		errors.Is(err, ErrAlreadyMember) ||
+		errors.Is(err, ErrNotMember) ||
+		errors.Is(err, ErrSessionExpired)
 }
 
 func truncate(s string, n int) string {

@@ -1,27 +1,10 @@
-// Package groups provides a Go client for the Facebook Groups surface.
-//
-// Authentication is cookie-based. Pass the six session cookies obtained from a
-// logged-in browser session to [New]. The client performs a one-time session
-// bootstrap on construction to extract the CSRF tokens required by every
-// GraphQL request.
-//
-// Example:
-//
-//	c, err := groups.New(groups.Cookies{
-//	    XS:    "39%3AW11l...",
-//	    CUser: "1226944",
-//	    SB:    "YXzYZl6g...",
-//	    DATR:  "TCeNaTXI...",
-//	    FR:    "1pRdJlAZ...",
-//	    PSL:   "1",
-//	})
-//	results, err := c.SearchGroups(ctx, "golang developers")
 package groups
 
 import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -70,8 +53,8 @@ type Client struct {
 	reqCounter atomic.Uint64
 	session    *sessionState
 
-	// lastReq guards the leaky-bucket rate limiter.
-	lastReqCh chan struct{}
+	// gapMu + lastReqAt implement the leaky-bucket rate limiter.
+	gapMu     sync.Mutex
 	lastReqAt time.Time
 }
 
@@ -96,10 +79,8 @@ func New(cookies Cookies, opts ...Option) (*Client, error) {
 		maxRetries: defaultMaxRetries,
 		retryBase:  defaultRetryBase,
 		minGap:     defaultMinGap,
-		session:    &sessionState{},
-		lastReqCh:  make(chan struct{}, 1),
+		session: &sessionState{},
 	}
-	c.lastReqCh <- struct{}{}
 
 	for _, o := range opts {
 		o(c)

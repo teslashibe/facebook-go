@@ -151,11 +151,7 @@ func (c *Client) JoinGroup(ctx context.Context, groupID string) error {
 	}
 
 	var data joinData
-	if err := unmarshalData(raw, &data); err != nil {
-		return err
-	}
-	_ = raw
-	return nil
+	return unmarshalData(raw, &data)
 }
 
 // LeaveGroup removes the authenticated user from the group.
@@ -184,11 +180,7 @@ func (c *Client) LeaveGroup(ctx context.Context, groupID string) error {
 	}
 
 	var data leaveData
-	if err := unmarshalData(raw, &data); err != nil {
-		return err
-	}
-	_ = raw
-	return nil
+	return unmarshalData(raw, &data)
 }
 
 // CreateGroup creates a new Facebook Group and returns its metadata.
