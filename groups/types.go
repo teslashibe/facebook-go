@@ -126,6 +126,26 @@ type CreateGroupParams struct {
 	Description string
 }
 
+// MembershipQuestion represents a single question that a closed group asks
+// prospective members. Some groups require all questions answered before the
+// join request is accepted.
+type MembershipQuestion struct {
+	ID       string   `json:"id"`
+	Text     string   `json:"text"`
+	Type     string   `json:"type"`     // OPEN_ENDED, MULTIPLE_CHOICE
+	Required bool     `json:"required"`
+	Options  []string `json:"options,omitempty"` // populated for MULTIPLE_CHOICE
+}
+
+// MembershipAnswer is one answer to a [MembershipQuestion]. For open-ended
+// questions, set Text. For multiple-choice questions, set Choice to one of
+// the question's Options.
+type MembershipAnswer struct {
+	QuestionID string `json:"questionId"`
+	Text       string `json:"text,omitempty"`
+	Choice     string `json:"choice,omitempty"`
+}
+
 // TrendReport is the output of ScrapeGroupTrends.
 type TrendReport struct {
 	GroupID        string          `json:"groupId"`

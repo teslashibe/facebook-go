@@ -2,7 +2,6 @@ package groups
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -52,24 +51,21 @@ func (c *Client) SearchGroups(ctx context.Context, query string, opts ...SearchO
 		"useDefaultActor":            false,
 	})
 
-	raw, err := c.graphqlAllLines(ctx, "SearchCometResultsInitialResultsQuery", vars)
+	raw, err := c.graphql(ctx, "SearchCometResultsInitialResultsQuery", vars)
 	if err != nil {
 		return nil, err
 	}
 
-	var allResults []GroupSearchResult
-	for _, line := range raw {
-		var data searchData
-		if json.Unmarshal(line, &data) != nil {
-			continue
-		}
-		allResults = append(allResults, data.groups()...)
-	}
-
-	if len(allResults) == 0 {
+	var data searchData
+	if err := unmarshalData(raw, &data); err != nil {
 		return nil, ErrNotFound
 	}
-	return allResults, nil
+
+	results := data.groups()
+	if len(results) == 0 {
+		return nil, ErrNotFound
+	}
+	return results, nil
 }
 
 // DiscoverGroups returns Facebook's personalised group suggestions for the

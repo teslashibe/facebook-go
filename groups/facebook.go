@@ -76,6 +76,13 @@ var defaultDocIDs = map[string]string{
 	"GroupsCometMembersRootQuery":                  "26328488663483009",
 	"CometGroupRootQuery":                          "26675395318752468",
 
+	// Membership questions (gated groups)
+	"GroupsCometParticipationQuestionsDialogQuery":      "27243898798531316",
+	"GroupsCometRequestToParticipateOnJoinDialogQuery":  "27505387249060985",
+
+	// Single-group feed (posts from one specific group)
+	"CometGroupDiscussionRootSuccessQuery":              "26867841739523736",
+
 	// Mutations — groups
 	"useGroupRequestToJoinMutation":                "25864060869939410",
 	"useGroupLeaveMutation":                        "34892951610348516",

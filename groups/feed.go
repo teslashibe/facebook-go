@@ -81,36 +81,91 @@ func (c *Client) GetGroupFeedPage(ctx context.Context, groupID, cursor string) (
 	return data.toFeedPage(), nil
 }
 
+// GetGroupPosts returns posts from a single specific group (as opposed to
+// [Client.GetGroupFeed] which returns the cross-group personalised feed).
+//
+// Use this when you want to read content from one specific group rather
+// than the user's home feed across all joined groups.
+func (c *Client) GetGroupPosts(ctx context.Context, groupID string) (FeedPage, error) {
+	if groupID == "" {
+		return FeedPage{}, fmt.Errorf("%w: groupID must not be empty", ErrInvalidParams)
+	}
+
+	vars := mergeVars(map[string]interface{}{
+		"autoOpenChat":                  false,
+		"creative_provider_id":          nil,
+		"feedbackSource":                0,
+		"feedLocation":                  "GROUP",
+		"feedType":                      "DISCUSSION",
+		"filter_topic_id":               nil,
+		"focusCommentID":                nil,
+		"groupID":                       groupID,
+		"hasHoistStories":               false,
+		"hoistedSectionHeaderType":      "notifications",
+		"hoistStories":                  []interface{}{},
+		"hoistStoriesCount":             0,
+		"privacySelectorRenderLocation": "COMET_STREAM",
+		"regular_stories_count":         3,
+		"regular_stories_stream_initial_count": 3,
+		"renderLocation":                "group",
+		"scale":                         2,
+		"shouldDeferMainFeed":           false,
+		"sortingSetting":                "TOP_POSTS",
+		"threadID":                      "",
+		"useDefaultActor":               false,
+	})
+
+	raw, err := c.graphql(ctx, "CometGroupDiscussionRootSuccessQuery", vars)
+	if err != nil {
+		return FeedPage{}, err
+	}
+
+	var data singleFeedData
+	if err := unmarshalData(raw, &data); err != nil {
+		return FeedPage{}, err
+	}
+
+	return data.toFeedPage(), nil
+}
+
 // GetPost retrieves a single group post by its story ID.
 func (c *Client) GetPost(ctx context.Context, postID string) (*Post, error) {
 	if postID == "" {
 		return nil, fmt.Errorf("%w: postID must not be empty", ErrInvalidParams)
 	}
 
-	type variables struct {
-		StoryID         string `json:"storyID"`
-		UseDefaultActor bool   `json:"useDefaultActor"`
-	}
-
-	raw, err := c.graphql(ctx, "CometSinglePostRouteQuery", variables{
-		StoryID:         postID,
-		UseDefaultActor: true,
+	vars := mergeVars(map[string]interface{}{
+		"storyID":          postID,
+		"hashtag":          "",
+		"useDefaultActor":  false,
+		"feedbackSource":   2,
+		"focusCommentID":   nil,
+		"privacySelectorRenderLocation": "COMET_STREAM",
+		"renderLocation":   "permalink",
+		"scale":            2,
 	})
+
+	raw, err := c.graphql(ctx, "CometSinglePostDialogContentQuery", vars)
 	if err != nil {
 		return nil, err
 	}
 
-	// The single-post query wraps the story inside data.story.
+	// The single-post query wraps the story inside data.node or data.story.
 	var data struct {
+		Node  *fbStory `json:"node"`
 		Story *fbStory `json:"story"`
 	}
 	if err := unmarshalData(raw, &data); err != nil {
 		return nil, err
 	}
-	if data.Story == nil {
+	story := data.Node
+	if story == nil {
+		story = data.Story
+	}
+	if story == nil {
 		return nil, ErrNotFound
 	}
 
-	p := data.Story.toPost("")
+	p := story.toPost("")
 	return &p, nil
 }

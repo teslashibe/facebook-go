@@ -4,7 +4,6 @@ package groups
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -107,18 +106,11 @@ func TestMyGroups(t *testing.T) {
 }
 
 // TestSearchGroups verifies AC-2.1 through AC-2.6.
-// Note: Search response parsing depends on Facebook's streaming JSON format.
-// The SERP data may arrive across multiple response lines with varying shapes.
 func TestSearchGroups(t *testing.T) {
 	c := mustClient(t)
 	ctx := context.Background()
 
 	results, err := c.SearchGroups(ctx, "golang developers", WithSearchLimit(5))
-	if errors.Is(err, ErrNotFound) {
-		t.Log("SearchGroups returned ErrNotFound — SERP response shape may have changed")
-		t.Log("The query executes successfully but response parsing needs shape updates")
-		return
-	}
 	if err != nil {
 		t.Fatalf("SearchGroups() error: %v", err)
 	}
@@ -272,6 +264,68 @@ func TestGetGroupMembers(t *testing.T) {
 			break
 		}
 		t.Logf("  member[%d] id=%s name=%q admin=%v", i, m.ID, m.Name, m.IsAdmin)
+	}
+}
+
+// TestGetGroupPosts verifies single-group feed works (vs cross-group feed).
+func TestGetGroupPosts(t *testing.T) {
+	c := mustClient(t)
+	ctx := context.Background()
+
+	myGroups, err := c.MyGroups(ctx)
+	if err != nil || len(myGroups) == 0 {
+		t.Skip("no groups available")
+	}
+
+	groupID := myGroups[0].ID
+	t.Logf("Reading posts from group %s (%s)", groupID, myGroups[0].Name)
+
+	feed, err := c.GetGroupPosts(ctx, groupID)
+	if err != nil {
+		t.Fatalf("GetGroupPosts() error: %v", err)
+	}
+
+	t.Logf("GetGroupPosts: %d posts, hasNext=%v", len(feed.Posts), feed.HasNext)
+	for i, p := range feed.Posts {
+		if i >= 3 {
+			break
+		}
+		t.Logf("  post[%d] id=%s feedbackID=%s author=%q reactions=%d msg=%s",
+			i, truncate(p.ID, 25), truncate(p.FeedbackID, 25),
+			p.AuthorName, p.ReactionCount, truncate(p.Message, 60))
+
+		// Single-group feed should have group_id matching what we asked for
+		if p.GroupID != "" && p.GroupID != groupID {
+			t.Errorf("post[%d] has group_id %s, expected %s", i, p.GroupID, groupID)
+		}
+	}
+}
+
+// TestGetMembershipQuestions verifies we can fetch the questions a closed group asks.
+func TestGetMembershipQuestions(t *testing.T) {
+	c := mustClient(t)
+	ctx := context.Background()
+
+	myGroups, err := c.MyGroups(ctx)
+	if err != nil || len(myGroups) == 0 {
+		t.Skip("no groups available")
+	}
+
+	groupID := myGroups[0].ID
+	t.Logf("Fetching membership questions for group %s (%s)", groupID, myGroups[0].Name)
+
+	questions, err := c.GetMembershipQuestions(ctx, groupID)
+	if err != nil {
+		t.Fatalf("GetMembershipQuestions() error: %v", err)
+	}
+
+	t.Logf("GetMembershipQuestions: %d questions", len(questions))
+	for i, q := range questions {
+		t.Logf("  q[%d] id=%s type=%s required=%v text=%q",
+			i, truncate(q.ID, 20), q.Type, q.Required, truncate(q.Text, 60))
+		if len(q.Options) > 0 {
+			t.Logf("    options: %v", q.Options)
+		}
 	}
 }
 

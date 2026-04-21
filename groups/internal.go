@@ -30,11 +30,33 @@ type gqlError struct {
 
 // err converts the error list into a Go error, mapping known codes to
 // the package sentinels.
+//
+// Facebook frequently returns "WARNING" severity errors alongside successful
+// data (e.g. missing relay provider variables that don't actually break the
+// query). We only treat CRITICAL and unspecified-severity errors as failures.
+// Callers will still receive the data when only warnings are present.
 func (e *gqlEnvelope) err() error {
 	if len(e.Errors) == 0 {
 		return nil
 	}
-	first := e.Errors[0]
+	// Find the first non-WARNING error. If all errors are warnings AND data
+	// is present, treat the response as a success.
+	var first gqlError
+	hasNonWarning := false
+	for _, err := range e.Errors {
+		if !strings.EqualFold(err.Severity, "WARNING") {
+			first = err
+			hasNonWarning = true
+			break
+		}
+	}
+	if !hasNonWarning {
+		// All warnings — only treat as error if there's no data.
+		if len(e.Data) > 0 && string(e.Data) != "null" {
+			return nil
+		}
+		first = e.Errors[0]
+	}
 	msg := strings.ToLower(first.Message)
 
 	switch {
@@ -278,6 +300,139 @@ func (fc *fbComment) toComment() Comment {
 // ---------------------------------------------------------------------------
 // Per-query data shapes
 // ---------------------------------------------------------------------------
+
+// --- Participation/membership questions ---
+
+type participationQuestionsData struct {
+	Group *struct {
+		ID                              string `json:"id"`
+		Name                            string `json:"name"`
+		CommunityParticipationQuestions []fbQuestion `json:"community_participation_questions"`
+		MembershipQuestions             []fbQuestion `json:"membership_questions"`
+	} `json:"group"`
+}
+
+type fbQuestion struct {
+	ID       string `json:"id"`
+	Question *fbText `json:"question_title"`
+	// Some responses use "title" or "text" directly
+	TitleText string `json:"title"`
+	BodyText  string `json:"text"`
+	Type      string `json:"question_type"` // OPEN_ENDED | MULTIPLE_CHOICE
+	Required  bool   `json:"is_required"`
+	Choices   []struct {
+		ID    string `json:"id"`
+		Label string `json:"label"`
+		Text  string `json:"text"`
+	} `json:"answer_choices"`
+}
+
+func (d *participationQuestionsData) toQuestions() []MembershipQuestion {
+	if d.Group == nil {
+		return nil
+	}
+	all := append([]fbQuestion{}, d.Group.CommunityParticipationQuestions...)
+	all = append(all, d.Group.MembershipQuestions...)
+
+	out := make([]MembershipQuestion, 0, len(all))
+	for _, q := range all {
+		mq := MembershipQuestion{
+			ID:       q.ID,
+			Type:     q.Type,
+			Required: q.Required,
+		}
+		switch {
+		case q.Question != nil && q.Question.Text != "":
+			mq.Text = q.Question.Text
+		case q.TitleText != "":
+			mq.Text = q.TitleText
+		case q.BodyText != "":
+			mq.Text = q.BodyText
+		}
+		for _, c := range q.Choices {
+			label := c.Label
+			if label == "" {
+				label = c.Text
+			}
+			if label != "" {
+				mq.Options = append(mq.Options, label)
+			}
+		}
+		out = append(out, mq)
+	}
+	return out
+}
+
+// --- Single-group feed ---
+// Response: group.group_feed.edges[].node (may be Story or section header)
+
+type singleFeedData struct {
+	Group *struct {
+		ID        string `json:"id"`
+		GroupFeed *struct {
+			Edges    []singleFeedEdge `json:"edges"`
+			PageInfo *fbPageInfo      `json:"page_info"`
+		} `json:"group_feed"`
+	} `json:"group"`
+}
+
+type singleFeedEdge struct {
+	Node *singleFeedNode `json:"node"`
+}
+
+type singleFeedNode struct {
+	Typename string      `json:"__typename"`
+	ID       string      `json:"id"`
+	PostID   string      `json:"post_id"`
+	Feedback *fbFeedback `json:"feedback"`
+	Message  *fbText     `json:"message"`
+	CreationTime int64   `json:"creation_time"`
+}
+
+func (d *singleFeedData) toFeedPage() FeedPage {
+	if d.Group == nil || d.Group.GroupFeed == nil {
+		return FeedPage{}
+	}
+	gid := d.Group.ID
+	page := FeedPage{}
+	for _, e := range d.Group.GroupFeed.Edges {
+		if e.Node == nil || e.Node.Typename != "Story" {
+			continue
+		}
+		p := Post{
+			ID:      e.Node.PostID,
+			GroupID: gid,
+		}
+		if p.ID == "" {
+			p.ID = e.Node.ID
+		}
+		if e.Node.Feedback != nil {
+			p.FeedbackID = e.Node.Feedback.ID
+			if e.Node.Feedback.OwningProfile != nil {
+				p.AuthorID = e.Node.Feedback.OwningProfile.ID
+				p.AuthorName = e.Node.Feedback.OwningProfile.Name
+			}
+			if e.Node.Feedback.ReactionCount != nil {
+				p.ReactionCount = e.Node.Feedback.ReactionCount.Count
+			}
+			if e.Node.Feedback.CommentCount != nil {
+				p.CommentCount = e.Node.Feedback.CommentCount.TotalCount
+			}
+			if e.Node.Feedback.ShareCount != nil {
+				p.ShareCount = e.Node.Feedback.ShareCount.Count
+			}
+		}
+		if e.Node.Message != nil {
+			p.Message = e.Node.Message.Text
+		}
+		page.Posts = append(page.Posts, p)
+	}
+	if pi := d.Group.GroupFeed.PageInfo; pi != nil {
+		page.HasNext = pi.HasNextPage
+		page.NextCursor = pi.EndCursor
+	}
+	return page
+}
 
 // --- Discover suggestions ---
 // Response: viewer.categories.discover_tab.units.edges[].node
@@ -568,21 +723,21 @@ type searchData struct {
 }
 
 type searchEdge struct {
-	Node *struct {
-		RenderingStrategy *struct {
-			ViewModel *struct {
-				Profile *struct {
-					Typename       string `json:"__typename"`
-					ID             string `json:"id"`
-					Name           string `json:"name"`
-					URL            string `json:"url"`
-					ProfilePicture *struct {
-						URI string `json:"uri"`
-					} `json:"profile_picture"`
-				} `json:"profile"`
-			} `json:"view_model"`
-		} `json:"rendering_strategy"`
-	} `json:"node"`
+	// rendering_strategy is at the EDGE level (sibling of node), not nested
+	// inside node. Verified against live Facebook SERP response.
+	RenderingStrategy *struct {
+		ViewModel *struct {
+			Profile *struct {
+				Typename       string `json:"__typename"`
+				ID             string `json:"id"`
+				Name           string `json:"name"`
+				URL            string `json:"url"`
+				ProfilePicture *struct {
+					URI string `json:"uri"`
+				} `json:"profile_picture"`
+			} `json:"profile"`
+		} `json:"view_model"`
+	} `json:"rendering_strategy"`
 }
 
 func (d *searchData) groups() []GroupSearchResult {
@@ -591,12 +746,12 @@ func (d *searchData) groups() []GroupSearchResult {
 	}
 	var out []GroupSearchResult
 	for _, e := range d.SerpResponse.Results.Edges {
-		if e.Node == nil || e.Node.RenderingStrategy == nil ||
-			e.Node.RenderingStrategy.ViewModel == nil ||
-			e.Node.RenderingStrategy.ViewModel.Profile == nil {
+		if e.RenderingStrategy == nil ||
+			e.RenderingStrategy.ViewModel == nil ||
+			e.RenderingStrategy.ViewModel.Profile == nil {
 			continue
 		}
-		p := e.Node.RenderingStrategy.ViewModel.Profile
+		p := e.RenderingStrategy.ViewModel.Profile
 		if p.Typename != "" && p.Typename != "Group" {
 			continue
 		}
