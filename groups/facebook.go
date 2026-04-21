@@ -50,7 +50,7 @@ var defaultDocIDs = map[string]string{
 
 	// Feed & posts
 	"CometModernHomeFeedQuery":                   "35430709819853581",
-	"CometSinglePostDialogContentQuery":          "27091356863854596",
+	"CometSinglePostDialogContentQuery":          "26485835561067485",
 	"CometFeedStoryMenuQuery":                    "26578139061874750",
 	"CometFeedInlineComposerQuery":               "26472956975672575",
 	"ProfileCometComposerRootQuery":              "26292641347064220",
@@ -95,6 +95,8 @@ var defaultDocIDs = map[string]string{
 	// Mutations — posts & comments (verified live)
 	"GroupCometComposerCreateDialogQuery":           "27499428346323949",
 	"GroupsCometInlineComposerRendererUpdateQuery":  "26422734134060146",
+	"ComposerStoryCreateMutation":                   "25879074401770690",
+	"ComposerStoryEditMutation":                     "26629276700039334",
 	"useCometUFICreateCommentMutation":              "26608664635429703",
 	"CometUFIFeedbackReactMutation":                 "34892649590379796",
 	"ReelComposerReelPublishMutation":               "24143317328587698",
