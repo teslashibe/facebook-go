@@ -74,6 +74,23 @@ var defaultDocIDs = map[string]string{
 	"GroupsCometDiscussionLayoutRootQuery":         "26595005356798382",
 	"GroupsCometDiscussionRootQuery":               "26867841739523736",
 	"GroupsCometMembersRootQuery":                  "26328488663483009",
+	"CometGroupRootQuery":                          "26675395318752468",
+
+	// Mutations — groups
+	"useGroupRequestToJoinMutation":                "25864060869939410",
+	"useGroupLeaveMutation":                        "34892951610348516",
+	"useGroupsCometFollowMutation":                 "23954755464142194",
+	"useGroupsCometUnfollowMutation":               "9558102717592331",
+	"useGroupsCometVisitMutation":                  "26506406622322884",
+
+	// Mutations — posts & comments
+	"GroupCometComposerCreateDialogQuery":           "27499428346323949",
+	"GroupsCometInlineComposerRendererUpdateQuery":  "26422734134060146",
+	"CometUFIFeedbackReactMutation":                 "33437545572555426",
+
+	// Feed pagination (group-specific)
+	"GroupsCometFeedRegularStoriesPaginationQuery":  "26577462205242925",
+	"GroupsCometFeedHoistedStoriesnPaginationQuery": "34927333560246608",
 }
 
 // Client is a Facebook Groups API client. It is safe for concurrent use.

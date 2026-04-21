@@ -157,9 +157,9 @@ func (c *Client) JoinGroup(ctx context.Context, groupID string) error {
 		IsSuggested bool   `json:"isSuggested"`
 	}
 
-	raw, err := c.graphql(ctx, "GroupJoinMutation", variables{
-		GroupID: groupID,
-		Surface: "GROUP_PAGE",
+	raw, err := c.graphql(ctx, "useGroupRequestToJoinMutation", map[string]interface{}{
+		"groupID": groupID,
+		"source":  "GROUP_PAGE",
 	})
 	if err != nil {
 		if errors.Is(err, ErrAlreadyMember) {
@@ -185,10 +185,10 @@ func (c *Client) LeaveGroup(ctx context.Context, groupID string) error {
 		RevokeJoinRequestIfPending bool `json:"revokeJoinRequestIfPending"`
 	}
 
-	raw, err := c.graphql(ctx, "GroupLeaveMutation", variables{
-		GroupID:                    groupID,
-		Source:                     "GROUP_HEADER_DROPDOWN",
-		RevokeJoinRequestIfPending: true,
+	raw, err := c.graphql(ctx, "useGroupLeaveMutation", map[string]interface{}{
+		"groupID":                    groupID,
+		"source":                     "GROUP_HEADER_DROPDOWN",
+		"revokeJoinRequestIfPending": true,
 	})
 	if err != nil {
 		if errors.Is(err, ErrNotMember) {
@@ -221,7 +221,7 @@ func (c *Client) CreateGroup(ctx context.Context, params CreateGroupParams) (*Gr
 		Input createInput `json:"input"`
 	}
 
-	raw, err := c.graphql(ctx, "GroupCreateMutation", variables{
+	raw, err := c.graphql(ctx, "GroupsCometCreateRootQuery", variables{
 		Input: createInput{
 			Name:        params.Name,
 			Description: params.Description,

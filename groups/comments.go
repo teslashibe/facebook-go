@@ -74,7 +74,7 @@ func (c *Client) CreateComment(ctx context.Context, feedbackID, message string) 
 		Input commentInput `json:"input"`
 	}
 
-	raw, err := c.graphql(ctx, "CommentCreateMutation", variables{
+	raw, err := c.graphql(ctx, "useCometUFICreateCommentMutation", variables{
 		Input: commentInput{
 			FeedbackID:          feedbackID,
 			Message:             messageInput{Text: message},

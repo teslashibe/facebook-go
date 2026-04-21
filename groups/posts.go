@@ -52,7 +52,7 @@ func (c *Client) CreatePost(ctx context.Context, groupID, message string, opts .
 		input.AttachmentURL = po.attachmentURL
 	}
 
-	raw, err := c.graphql(ctx, "ComposerStoryCreateMutation", variables{Input: input})
+	raw, err := c.graphql(ctx, "GroupCometComposerCreateDialogQuery", variables{Input: input})
 	if err != nil {
 		return nil, err
 	}
