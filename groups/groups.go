@@ -242,7 +242,7 @@ func (c *Client) CreateGroup(ctx context.Context, params CreateGroupParams) (*Gr
 		Input createInput `json:"input"`
 	}
 
-	raw, err := c.graphql(ctx, "GroupsCometCreateRootQuery", variables{
+	raw, err := c.graphql(ctx, "useGroupsCometCreateMutation", variables{
 		Input: createInput{
 			Name:        params.Name,
 			Description: params.Description,

@@ -56,8 +56,7 @@ var defaultDocIDs = map[string]string{
 	"ProfileCometComposerRootQuery":              "26292641347064220",
 	"ProfileCometTimelineFeedQuery":              "26484140144542166",
 
-	// Comments & reactions
-	"useCometUFICreateCommentMutation":           "26507776998841912",
+	// Comments & reactions queries (mutations are below)
 	"CometUFICommentRefetchQuery":                "26577964715169700",
 	"CometUFICommentMenuQuery":                   "26230165949984969",
 	"CometUFIReactionsDialogQuery":               "33437545572555426",
@@ -66,7 +65,6 @@ var defaultDocIDs = map[string]string{
 
 	// Groups — utility
 	"GroupsCometUFIAnonActorSwitcherMenuQuery":    "25736011312767229",
-	"useGroupHideSuggestionMutation":              "9454440231347992",
 
 	// Search
 	"CometSearchKeywordDataSourceQuery":           "34279758474973265",
@@ -85,17 +83,22 @@ var defaultDocIDs = map[string]string{
 	// Single-group feed (posts from one specific group)
 	"CometGroupDiscussionRootSuccessQuery":              "26867841739523736",
 
-	// Mutations — groups
+	// Mutations — groups (verified live via JS bundle harvest 2026-04-20)
 	"useGroupRequestToJoinMutation":                "25864060869939410",
 	"useGroupLeaveMutation":                        "34892951610348516",
+	"useGroupsCometCreateMutation":                 "26410639795238208",
 	"useGroupsCometFollowMutation":                 "23954755464142194",
 	"useGroupsCometUnfollowMutation":               "9558102717592331",
 	"useGroupsCometVisitMutation":                  "26506406622322884",
+	"useGroupHideSuggestionMutation":               "9454440231347992",
 
-	// Mutations — posts & comments
+	// Mutations — posts & comments (verified live)
 	"GroupCometComposerCreateDialogQuery":           "27499428346323949",
 	"GroupsCometInlineComposerRendererUpdateQuery":  "26422734134060146",
-	"CometUFIFeedbackReactMutation":                 "33437545572555426",
+	"useCometUFICreateCommentMutation":              "26608664635429703",
+	"CometUFIFeedbackReactMutation":                 "34892649590379796",
+	"ReelComposerReelPublishMutation":               "24143317328587698",
+	"VideoComposerVideoPublishingMutation":          "29705123342436060",
 
 	// Feed pagination (group-specific)
 	"GroupsCometFeedRegularStoriesPaginationQuery":  "26577462205242925",
