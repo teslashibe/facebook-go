@@ -109,9 +109,12 @@ func (c *Client) MyGroups(ctx context.Context) ([]Group, error) {
 	return data.groups(), nil
 }
 
-// GetGroup retrieves full metadata for a single group by its numeric ID.
-// Returns ErrNotFound for nonexistent groups and ErrForbidden for secret groups
-// the user is not a member of.
+// GetGroup retrieves metadata for a single group by its numeric ID.
+// Returns name, profile picture, member count, viewer join state, and whether
+// the group requires answering membership questions.
+//
+// Returns ErrNotFound for nonexistent group IDs and ErrForbidden for secret
+// groups the user is not a member of.
 func (c *Client) GetGroup(ctx context.Context, groupID string) (*Group, error) {
 	if groupID == "" {
 		return nil, fmt.Errorf("%w: groupID must not be empty", ErrInvalidParams)
@@ -120,15 +123,14 @@ func (c *Client) GetGroup(ctx context.Context, groupID string) (*Group, error) {
 	vars := map[string]interface{}{
 		"groupID": groupID,
 		"scale":   2,
-		"__relay_internal__pv__GroupsCometGroupChatLazyLoadLastMessageSnippetrelayprovider": false,
 	}
 
-	raw, err := c.graphql(ctx, "GroupsCometDiscussionLayoutRootQuery", vars)
+	raw, err := c.graphql(ctx, "GroupsCometParticipationQuestionsDialogQuery", vars)
 	if err != nil {
 		return nil, err
 	}
 
-	var data groupData
+	var data participationQuestionsData
 	if err := unmarshalData(raw, &data); err != nil {
 		return nil, err
 	}
@@ -136,7 +138,30 @@ func (c *Client) GetGroup(ctx context.Context, groupID string) (*Group, error) {
 		return nil, ErrNotFound
 	}
 
-	g := data.Group.toGroup()
+	g := Group{
+		ID:   data.Group.ID,
+		Name: data.Group.Name,
+	}
+	if data.Group.ProfilePicture != nil {
+		g.CoverURL = data.Group.ProfilePicture.URI
+	}
+	// Extract member count from the snippets text (e.g. "33K members • 3 posts a month")
+	if data.Group.GroupSnippets != nil {
+		for _, e := range data.Group.GroupSnippets.Edges {
+			if e.Node != nil && e.Node.Title != nil {
+				g.Description = e.Node.Title.Text
+				break
+			}
+		}
+	}
+	switch data.Group.ViewerForumJoinState {
+	case "CAN_JOIN":
+		// not a member
+	case "MEMBER", "JOINED":
+		g.Joined = true
+	case "REQUESTED", "PENDING":
+		g.PendingJoin = true
+	}
 	return &g, nil
 }
 

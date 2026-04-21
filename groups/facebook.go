@@ -61,6 +61,8 @@ var defaultDocIDs = map[string]string{
 	"CometUFICommentRefetchQuery":                "26577964715169700",
 	"CometUFICommentMenuQuery":                   "26230165949984969",
 	"CometUFIReactionsDialogQuery":               "33437545572555426",
+	// Alias used by GetPostComments
+	"CommentsListComponentPaginationQuery":       "26577964715169700",
 
 	// Groups — utility
 	"GroupsCometUFIAnonActorSwitcherMenuQuery":    "25736011312767229",

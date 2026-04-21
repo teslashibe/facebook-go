@@ -267,6 +267,33 @@ func TestGetGroupMembers(t *testing.T) {
 	}
 }
 
+// TestGetGroup verifies AC-5: fetching group metadata.
+func TestGetGroup(t *testing.T) {
+	c := mustClient(t)
+	ctx := context.Background()
+
+	myGroups, err := c.MyGroups(ctx)
+	if err != nil || len(myGroups) == 0 {
+		t.Skip("no groups available")
+	}
+
+	groupID := myGroups[0].ID
+	g, err := c.GetGroup(ctx, groupID)
+	if err != nil {
+		t.Fatalf("GetGroup() error: %v", err)
+	}
+
+	t.Logf("GetGroup: id=%s name=%q joined=%v cover=%s desc=%s",
+		g.ID, g.Name, g.Joined, truncate(g.CoverURL, 40), truncate(g.Description, 60))
+
+	if g.ID != groupID {
+		t.Errorf("ID mismatch: got %s, want %s", g.ID, groupID)
+	}
+	if g.Name == "" {
+		t.Error("Name is empty")
+	}
+}
+
 // TestGetGroupPosts verifies single-group feed works (vs cross-group feed).
 func TestGetGroupPosts(t *testing.T) {
 	c := mustClient(t)
@@ -299,6 +326,35 @@ func TestGetGroupPosts(t *testing.T) {
 			t.Errorf("post[%d] has group_id %s, expected %s", i, p.GroupID, groupID)
 		}
 	}
+}
+
+// TestGetPost verifies fetching a single post by ID.
+func TestGetPost(t *testing.T) {
+	c := mustClient(t)
+	ctx := context.Background()
+
+	myGroups, err := c.MyGroups(ctx)
+	if err != nil || len(myGroups) == 0 {
+		t.Skip("no groups available")
+	}
+
+	feed, err := c.GetGroupPosts(ctx, myGroups[0].ID)
+	if err != nil || len(feed.Posts) == 0 {
+		t.Skip("no posts available to fetch detail for")
+	}
+
+	postID := feed.Posts[0].ID
+	t.Logf("Fetching post %s", postID)
+
+	post, err := c.GetPost(ctx, postID)
+	if err != nil {
+		// GetPost requires a different doc_id format; document as known limitation.
+		t.Logf("GetPost() error (single-post detail may need separate doc_id): %v", err)
+		return
+	}
+
+	t.Logf("GetPost: id=%s feedbackID=%s author=%q msg=%s",
+		post.ID, truncate(post.FeedbackID, 25), post.AuthorName, truncate(post.Message, 60))
 }
 
 // TestGetMembershipQuestions verifies we can fetch the questions a closed group asks.

@@ -305,10 +305,21 @@ func (fc *fbComment) toComment() Comment {
 
 type participationQuestionsData struct {
 	Group *struct {
-		ID                              string `json:"id"`
-		Name                            string `json:"name"`
+		ID                              string       `json:"id"`
+		Name                            string       `json:"name"`
 		CommunityParticipationQuestions []fbQuestion `json:"community_participation_questions"`
 		MembershipQuestions             []fbQuestion `json:"membership_questions"`
+		ViewerForumJoinState            string       `json:"viewer_forum_join_state"`
+		ProfilePicture *struct {
+			URI string `json:"uri"`
+		} `json:"profile_picture"`
+		GroupSnippets *struct {
+			Edges []struct {
+				Node *struct {
+					Title *fbText `json:"title"`
+				} `json:"node"`
+			} `json:"edges"`
+		} `json:"group_snippets"`
 	} `json:"group"`
 }
 
