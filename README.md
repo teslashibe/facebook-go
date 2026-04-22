@@ -233,6 +233,27 @@ FB_SB="..." FB_DATR="..." FB_CUSER="..." FB_XS="..." FB_FR="..." FB_PSL="..." FB
   go test -tags integration -v -timeout 120s ./groups/
 ```
 
+## MCP support
+
+This package ships an [MCP](https://modelcontextprotocol.io/) tool surface in `./mcp` for use with [`teslashibe/mcptool`](https://github.com/teslashibe/mcptool)-compatible hosts (e.g. [`teslashibe/agent-setup`](https://github.com/teslashibe/agent-setup)). 21 tools cover the full `groups.Client` API: group discovery (search, suggestions, joined-groups, fetch), lifecycle (join, leave, create, gated-join with answers), feed reads (cross-group feed, single-group posts, single post, paginated comments and members), writes (create post, comment, react), and trend analysis.
+
+```go
+import (
+    "github.com/teslashibe/mcptool"
+    "github.com/teslashibe/facebook-go/groups"
+    fbmcp "github.com/teslashibe/facebook-go/mcp"
+)
+
+client, _ := groups.New(groups.Cookies{...})
+provider := fbmcp.Provider{}
+for _, tool := range provider.Tools() {
+    // register tool with your MCP server, passing client as the
+    // opaque client argument when invoking
+}
+```
+
+A coverage test in `mcp/mcp_test.go` fails if a new exported method is added to `*groups.Client` without either being wrapped by an MCP tool or being added to `mcp.Excluded` with a reason — keeping the MCP surface in lockstep with the package API is enforced by CI rather than convention.
+
 ## License
 
 MIT
