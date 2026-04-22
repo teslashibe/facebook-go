@@ -2,6 +2,36 @@ package groups
 
 import "time"
 
+// RateLimitState captures rate-limit information from the most recently observed
+// response headers. All fields are zero-valued until a response with rate-limit
+// headers is received.
+type RateLimitState struct {
+	Limit      int           `json:"limit"`
+	Remaining  int           `json:"remaining"`
+	Reset      time.Time     `json:"reset"`
+	RetryAfter time.Duration `json:"retry_after"`
+}
+
+// IsLimited reports whether the current state indicates requests are blocked.
+func (r RateLimitState) IsLimited() bool {
+	if !r.Reset.IsZero() && r.Remaining == 0 && time.Now().Before(r.Reset) {
+		return true
+	}
+	return r.RetryAfter > 0
+}
+
+// ResetIn returns how long until the rate-limit window resets.
+// Returns 0 if Reset is in the past or not set.
+func (r RateLimitState) ResetIn() time.Duration {
+	if r.Reset.IsZero() {
+		return 0
+	}
+	if d := time.Until(r.Reset); d > 0 {
+		return d
+	}
+	return 0
+}
+
 // Cookies holds the Facebook session cookies obtained from a browser export.
 // All six fields are required for full write access. xs and CUser are the
 // most critical — the others strengthen fingerprint matching.

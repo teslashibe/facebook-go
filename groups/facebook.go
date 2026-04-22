@@ -123,6 +123,10 @@ type Client struct {
 	// gapMu + lastReqAt implement the leaky-bucket rate limiter.
 	gapMu     sync.Mutex
 	lastReqAt time.Time
+
+	// rlMu + rlState track the most recently observed rate-limit headers.
+	rlMu    sync.Mutex
+	rlState RateLimitState
 }
 
 // New constructs a Client and performs the session bootstrap immediately.
@@ -217,6 +221,13 @@ func WithProxy(proxyURL string) Option {
 // Default: 800ms. Lower values risk triggering Facebook's rate limiter.
 func WithMinRequestGap(d time.Duration) Option {
 	return func(c *Client) { c.minGap = d }
+}
+
+// RateLimit returns a snapshot of the most recently observed rate-limit state.
+func (c *Client) RateLimit() RateLimitState {
+	c.rlMu.Lock()
+	defer c.rlMu.Unlock()
+	return c.rlState
 }
 
 // docID returns the doc_id for the given friendly name.
