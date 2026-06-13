@@ -37,6 +37,12 @@ type LoginParams struct {
 	// (interposed from unfamiliar IPs).
 	VerificationCode string
 
+	// VerificationProvider, when set, is called to fetch the checkpoint code on
+	// demand (e.g. read from the user's connected Gmail). It is only invoked if
+	// the sidecar reports a verification challenge and no VerificationCode was
+	// pre-supplied.
+	VerificationProvider func(ctx context.Context) (string, error)
+
 	// HTTPClient overrides the client used to talk to the sidecar. Optional.
 	HTTPClient *http.Client
 }
@@ -85,7 +91,7 @@ func Login(ctx context.Context, p LoginParams) (*LoginResult, error) {
 	}
 	endpoint := strings.TrimRight(p.SidecarURL, "/") + "/login"
 
-	payload, err := json.Marshal(sidecarLoginRequest{
+	out, err := callSidecar(ctx, httpClient, endpoint, sidecarLoginRequest{
 		Platform:         "facebook",
 		Username:         p.Username,
 		Password:         p.Password,
@@ -95,22 +101,27 @@ func Login(ctx context.Context, p LoginParams) (*LoginResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("facebook: social-login sidecar: %w", err)
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-
-	var out sidecarLoginResponse
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, fmt.Errorf("facebook: social-login sidecar: bad response (status %d): %s", resp.StatusCode, truncate(string(raw), 200))
+	// Facebook interposes an email/SMS checkpoint from unfamiliar IPs. If the
+	// sidecar reports one and we can fetch a code, submit it and retry once.
+	if !out.OK && (out.Challenge || hasHint(out.Hints, "verification_code_required")) &&
+		p.VerificationCode == "" && p.VerificationProvider != nil {
+		code, perr := p.VerificationProvider(ctx)
+		if perr != nil {
+			return nil, fmt.Errorf("facebook login challenge: fetching code: %w", perr)
+		}
+		if strings.TrimSpace(code) != "" {
+			out, err = callSidecar(ctx, httpClient, endpoint, sidecarLoginRequest{
+				Platform:         "facebook",
+				Username:         p.Username,
+				Password:         p.Password,
+				VerificationCode: code,
+				ProxyURL:         p.ProxyURL,
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	if !out.OK {
@@ -141,6 +152,32 @@ func Login(ctx context.Context, p LoginParams) (*LoginResult, error) {
 		return nil, fmt.Errorf("%w: sidecar returned no session cookies (c_user/xs)", ErrInvalidAuth)
 	}
 	return &LoginResult{Cookies: cookies, FinalURL: out.FinalURL}, nil
+}
+
+// callSidecar performs one POST /login round-trip and decodes the response.
+func callSidecar(ctx context.Context, httpClient *http.Client, endpoint string, body sidecarLoginRequest) (sidecarLoginResponse, error) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return sidecarLoginResponse{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return sidecarLoginResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return sidecarLoginResponse{}, fmt.Errorf("facebook: social-login sidecar: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+
+	var out sidecarLoginResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return sidecarLoginResponse{}, fmt.Errorf("facebook: social-login sidecar: bad response (status %d): %s", resp.StatusCode, truncate(string(raw), 200))
+	}
+	return out, nil
 }
 
 func hasHint(hints []string, want string) bool {
