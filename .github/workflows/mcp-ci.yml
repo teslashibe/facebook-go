@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "mcp/**"
+      - "groups/**"
       - "go.mod"
       - "go.sum"
       - ".github/workflows/mcp-ci.yml"
@@ -35,3 +36,5 @@ jobs:
         run: go build ./...
       - name: Test mcp package
         run: go test -race -count=1 ./mcp/...
+      - name: Test groups package (offline fixtures, no integration tag)
+        run: go test -race -count=1 ./groups/...
