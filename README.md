@@ -79,7 +79,15 @@ All surfaces use cookie-based auth. Export your cookies from a logged-in browser
 | `fr` | Friend-request + ad tracking token |
 | `ps_l` | Presence/status |
 
-The client performs a one-time bootstrap on construction: it loads `/groups/feed/` and extracts the CSRF tokens (`fb_dtsg`, `lsd`, `__rev`, etc.) required by every GraphQL request.
+The client performs a one-time bootstrap on construction: it loads `/groups/feed/` and extracts the CSRF tokens (`fb_dtsg`, `lsd`, `__rev`, etc.) required by every GraphQL request. It also reads the logged-in user from the page's `CurrentUserInitialData`. Use `groups.NewContext(ctx, cookies, opts...)` when the bootstrap should honour a context.
+
+If you have the browser's whole cookie jar, pass it in `Cookies.Jar` (name to value, facebook.com cookies only). The Cookie header then carries every jar cookie. `c_user` and `xs` are still required, either as the named fields or in the jar, and a non-empty named field wins over the same cookie in the jar.
+
+```go
+c, err := groups.NewContext(ctx, groups.Cookies{Jar: cookiesFromBrowser})
+```
+
+`c.AuthSnapshot()` returns the jar after every `Set-Cookie` the client has seen, with deleted and expired cookies removed, so you can store rotated cookies.
 
 ## Groups Surface — Full API
 
@@ -153,7 +161,38 @@ members, err := c.GetGroupMembers(ctx, groupID)
 comments, err := c.GetPostComments(ctx, post.FeedbackID)
 ```
 
+### Watching groups
+
+These reads take the Facebook user id you expect the session to belong to. They fail with `ErrSenderIdentityMismatch` when the bootstrap page's `USER_ID` or the `c_user` cookie is someone else, before any GraphQL request is sent.
+
+```go
+me, err := c.WhoAmI(ctx) // fresh bootstrap page: me.UserID, me.Name, me.ProfileURL
+userID := c.VerifiedUserID() // USER_ID from the last bootstrap
+
+// Joined groups, 20 per page by default (at most 50)
+page, err := c.ListJoinedGroups(ctx, userID, groups.ListOptions{})
+for page.HasNext {
+    page, err = c.ListJoinedGroups(ctx, userID, groups.ListOptions{Cursor: page.NextCursor})
+}
+
+// One page of a group's posts, newest first (sortingSetting CHRONOLOGICAL)
+feed, err := c.ListGroupPosts(ctx, userID, groupID, groups.PostListOptions{Count: 10})
+next, err := c.ListGroupPosts(ctx, userID, groupID, groups.PostListOptions{Cursor: feed.NextCursor})
+
+// Everything newer than what you stored last time, at most 5 pages
+posts, err := c.PostsSince(ctx, userID, groupID, lastSeenPostID, lastSeenAt, 5)
+for _, p := range posts {
+    fmt.Println(p.CreatedAt, p.Permalink, p.Author.Kind, p.Author.Name)
+}
+```
+
+`PostsSince` stops before the post whose `ID` or `StoryID` is `sinceID`, before the first post older than `sinceTime`, when the feed has no next page, or after `maxPages`. A zero `sinceID` or `sinceTime` turns that stop off.
+
+Every post carries `ID`, `StoryID`, `FeedbackID`, `GroupID`, `Message`, `CreatedAt`, `Permalink` and `Author`. `Author.Kind` is `person`, `page`, `anonymous` or `unknown`, read from the story's actor (`AuthorID` and `AuthorName` mirror it). When the story has no actor, the author falls back to `feedback.owning_profile` and stays `unknown` unless its type says otherwise. A group whose `group` or `group_feed` comes back null returns `ErrNotMember`, never an empty page. `Group.Joined` and `Group.PendingJoin` come from each row's membership state.
+
 ### Writing Content
+
+Mutations are sent once and never retried, whatever `WithRetry` says. When the request may have reached Facebook without a clear answer (a transport error after sending, an HTTP 5xx or a body that can't be decoded) the call returns `ErrWriteUnknown`. Treat that write as possibly done and don't send it again.
 
 ```go
 // Post to a group
@@ -200,31 +239,62 @@ for _, a := range report.ActiveAuthors {
 
 ```go
 c, err := groups.New(cookies,
-    groups.WithUserAgent("custom UA"),
-    groups.WithMinRequestGap(time.Second),      // default 800ms
-    groups.WithRetry(5, time.Second),            // 5 attempts, 1s base
+    groups.WithBrowserProfile(userAgent),         // UA plus matching Sec-Ch-Ua headers
+    groups.WithMinRequestGap(time.Second),        // default 800ms
+    groups.WithRetry(5, time.Second),             // reads only: 5 attempts, 1s base
     groups.WithProxy("http://user:pass@host:port"),
-    groups.WithHTTPClient(customClient),
-    groups.WithDocIDs(map[string]string{         // override rotated doc_ids
-        "ComposerStoryCreateMutation": "new_id",
+    groups.WithHTTPClient(customClient),          // wins over WithProxy
+    groups.WithRequestGate(func(ctx context.Context) error {
+        return budget.Allow(ctx)                  // runs before every request
+    }),
+    groups.WithDocIDs(map[string]string{          // override rotated doc_ids
+        "GroupsCometFeedRegularStoriesPaginationQuery": "new_id",
     }),
 )
 ```
 
+- `WithHTTPClient` is the only transport when it is set, whatever the option order, and `WithProxy` is then ignored.
+- `WithProxy` fails closed. A URL that doesn't parse, or has no http, https, socks5 or socks5h scheme or no host, makes `New` return `ErrInvalidParams`. The client never falls back to direct egress.
+- `WithBrowserProfile(userAgent)` sends that User-Agent with `Sec-Ch-Ua`, `Sec-Ch-Ua-Platform` and `Sec-Ch-Ua-Mobile` derived from it, the way Chromium builds them for that version and platform. Firefox and Safari user agents get no client hints, as in the real browsers. `WithUserAgent` derives the hints the same way.
+- `WithRequestGate` runs before every physical request, including the bootstrap and each redirect hop. If it returns an error, nothing is sent and the caller gets that error wrapped (`errors.Is` works).
+- `WithDocIDs` overrides doc_ids. A doc_id Facebook no longer knows returns `ErrDocIDStale`.
+- `c.LastResponse()` reports the last response's status, friendly name and a short code such as `ok`, `http_429`, `gql_368` or `checkpoint_redirect`. It never includes a body.
+
+## Errors and session safety
+
+| Error | When |
+|-------|------|
+| `ErrSessionExpired` | HTTP 401, a not-logged-in error or a redirect to `/login`. A read re-bootstraps once and retries exactly once, whatever `WithRetry` says, and returns this when that doesn't recover the session |
+| `ErrCheckpoint` | A redirect to `/checkpoint/` (or two-step verification), or an error that names a checkpoint |
+| `ErrFeatureBlocked` | `api_error_code` 368, "temporarily blocked", "going too fast" or "you're blocked" |
+| `ErrAccountRestricted` | An error saying the account is restricted or disabled |
+| `ErrRateLimited` | HTTP 429. `c.RateLimit().RetryAfter` holds the Retry-After value |
+| `ErrSenderIdentityMismatch` | An identity-bound read whose session belongs to another user |
+| `ErrWriteUnknown` | A mutation that may have reached Facebook without a clear answer |
+| `ErrNotMember`, `ErrForbidden`, `ErrNotFound`, `ErrDocIDStale` | Group membership, access, missing objects and rotated doc_ids |
+
+GraphQL `errors[]` and top-level `{"error": ...}` bodies are both classified. Block, checkpoint and restriction wording is matched before the generic session wording.
+
 ## Architecture
 
 - **Cookie-based auth** — no OAuth, no official API, no browser automation
-- **Session bootstrap** — one GET to `/groups/feed/` extracts 7 CSRF tokens via regex
+- **Session bootstrap** — one GET to `/groups/feed/` extracts 7 CSRF tokens and the logged-in user; redirects are followed by hand so the request gate and cookie rotation see every hop
 - **GraphQL over HTTP** — all operations POST to `/api/graphql/` with form-encoded bodies
 - **`for(;;);` stripping** — Facebook's XSS guard prefix is stripped before JSON decode
 - **Leaky-bucket rate limiter** — 800ms minimum gap between requests (per client)
-- **Exponential-backoff retry** — 3 attempts on 429/5xx, single re-bootstrap on session expiry
+- **Exponential-backoff retry** — reads only: 3 attempts on 429/5xx, one re-bootstrap and one retry on session expiry; mutations are sent once
 - **WARNING-tolerant** — Facebook returns 20+ relay-provider warnings per response; only CRITICAL errors are treated as failures
 - **Multi-line JSON** — streaming responses parsed line-by-line
 - **Relay provider variables** — standard `__relay_internal__pv__*` vars injected automatically
 - **doc_id overrides** — `WithDocIDs()` for when Facebook rotates query IDs after deploys
 
 ## Running Tests
+
+The offline tests run against sanitized fixtures in `groups/testdata/` and a local test server, with no network access:
+
+```bash
+go test -race ./...
+```
 
 Integration tests require live Facebook session cookies:
 
@@ -251,6 +321,8 @@ for _, tool := range provider.Tools() {
     // opaque client argument when invoking
 }
 ```
+
+The identity-bound watcher reads (`ListJoinedGroups`, `ListGroupPosts`, `PostsSince`) and the session helpers (`WhoAmI`, `VerifiedUserID`, `AuthSnapshot`, `LastResponse`) are listed in `mcp.Excluded` with a reason. `AuthSnapshot` returns live cookies, so it must never reach an agent.
 
 A coverage test in `mcp/mcp_test.go` fails if a new exported method is added to `*groups.Client` without either being wrapped by an MCP tool or being added to `mcp.Excluded` with a reason — keeping the MCP surface in lockstep with the package API is enforced by CI rather than convention.
 

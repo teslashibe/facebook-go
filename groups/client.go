@@ -1,13 +1,13 @@
 package groups
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -15,17 +15,52 @@ import (
 	"time"
 )
 
-// graphql executes an authenticated Facebook GraphQL POST request.
-// It handles rate limiting, retries, session refresh, and the for(;;); prefix.
-func (c *Client) graphql(ctx context.Context, friendlyName string, variables interface{}) (json.RawMessage, error) {
-	docID := c.docID(friendlyName)
-	if docID == "" {
-		return nil, fmt.Errorf("%w: no doc_id registered for %q", ErrInvalidParams, friendlyName)
-	}
+// maxResponseBody caps how much of a GraphQL response is read.
+const maxResponseBody = 32 << 20
 
-	varsJSON, err := json.Marshal(variables)
+// gqlPayload is one incremental (@stream / @defer) payload that followed the
+// first data payload of a multi-line GraphQL response.
+type gqlPayload struct {
+	Path  []any
+	Label string
+	Data  json.RawMessage
+}
+
+// gqlResult is a decoded GraphQL response.
+type gqlResult struct {
+	// Data is the first non-null data payload.
+	Data json.RawMessage
+	// Incremental holds every later payload that carried data, in order.
+	Incremental []gqlPayload
+}
+
+// gateError wraps a request-gate refusal so errors.Is reaches the gate's error.
+type gateError struct{ err error }
+
+func (e *gateError) Error() string { return "facebook/groups: request gate refused: " + e.err.Error() }
+func (e *gateError) Unwrap() error { return e.err }
+
+// graphql runs a read query and returns the first data payload. It keeps the
+// signature the existing read methods use.
+func (c *Client) graphql(ctx context.Context, friendlyName string, variables interface{}) (json.RawMessage, error) {
+	res, err := c.read(ctx, "", friendlyName, variables)
 	if err != nil {
-		return nil, fmt.Errorf("%w: marshalling variables: %v", ErrInvalidParams, err)
+		return nil, err
+	}
+	return res.Data, nil
+}
+
+// read executes a GraphQL query with retries.
+//
+// Retriable failures (5xx, transport errors, 429) are retried up to
+// maxRetries attempts with exponential backoff. An expired session triggers
+// one re-bootstrap; when it succeeds the query is retried exactly once more,
+// whatever maxRetries is, and a second expiry returns ErrSessionExpired. When
+// expectedUser is set, identity is re-checked after the re-bootstrap.
+func (c *Client) read(ctx context.Context, expectedUser, friendlyName string, variables interface{}) (*gqlResult, error) {
+	docID, varsJSON, err := c.prepare(friendlyName, variables)
+	if err != nil {
+		return nil, err
 	}
 
 	attempts := c.maxRetries
@@ -34,7 +69,7 @@ func (c *Client) graphql(ctx context.Context, friendlyName string, variables int
 	}
 
 	var lastErr error
-	bootstrapped := false
+	rebootstrapped := false
 	for i := 0; i < attempts; i++ {
 		if i > 0 {
 			wait := c.retryBase * time.Duration(math.Pow(2, float64(i-1)))
@@ -45,18 +80,31 @@ func (c *Client) graphql(ctx context.Context, friendlyName string, variables int
 			}
 		}
 
-		data, err := c.doGraphQL(ctx, friendlyName, docID, varsJSON)
+		res, err := c.dispatch(ctx, friendlyName, docID, varsJSON, false)
 		if err == nil {
-			return data, nil
+			return res, nil
 		}
 
-		// On session expiry, re-bootstrap exactly once then retry.
-		if errors.Is(err, ErrSessionExpired) && !bootstrapped {
-			bootstrapped = true
-			if bErr := c.bootstrap(); bErr == nil {
-				continue
+		if errors.Is(err, ErrSessionExpired) {
+			if rebootstrapped {
+				return nil, err
 			}
-			return nil, err
+			rebootstrapped = true
+			if bErr := c.bootstrap(ctx); bErr != nil {
+				return nil, sessionLost(bErr)
+			}
+			if expectedUser != "" {
+				if idErr := c.requireUser(expectedUser); idErr != nil {
+					return nil, idErr
+				}
+			}
+			res, err = c.dispatch(ctx, friendlyName, docID, varsJSON, false)
+			if err == nil {
+				return res, nil
+			}
+			if errors.Is(err, ErrSessionExpired) {
+				return nil, err
+			}
 		}
 
 		if isNonRetriable(err) {
@@ -67,78 +115,66 @@ func (c *Client) graphql(ctx context.Context, friendlyName string, variables int
 	return nil, lastErr
 }
 
-// doGraphQLRaw performs a single POST and returns the raw response body
-// (with for(;;); stripped) for callers that need to parse multiple lines.
-func (c *Client) doGraphQLRaw(ctx context.Context, friendlyName, docID string, varsJSON []byte) ([]byte, error) {
-	c.waitForGap(ctx)
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
+// mutate executes a GraphQL mutation exactly once: no retry, no re-bootstrap.
+// When the request may have reached Facebook without a definite answer
+// (transport error after dispatch, HTTP 5xx, undecodable body) it returns
+// ErrWriteUnknown, and the caller must not replay it.
+func (c *Client) mutate(ctx context.Context, friendlyName string, variables interface{}) (json.RawMessage, error) {
+	docID, varsJSON, err := c.prepare(friendlyName, variables)
+	if err != nil {
+		return nil, err
 	}
-
-	dtsg, lsd, rev, hs, hsi, spinT, spinS, jazoest := c.session.snap()
-	req64 := strconv.FormatUint(c.reqCounter.Add(1), 16)
-
-	form := url.Values{}
-	form.Set("av", c.cookies.CUser); form.Set("__user", c.cookies.CUser)
-	form.Set("__a", "1"); form.Set("__req", req64); form.Set("__hs", hs)
-	form.Set("dpr", "2"); form.Set("__ccg", "EXCELLENT"); form.Set("__rev", rev)
-	if spinS != "" { form.Set("__s", spinS) }
-	form.Set("__hsi", hsi); form.Set("__comet_req", "15")
-	form.Set("fb_dtsg", dtsg); form.Set("jazoest", jazoest); form.Set("lsd", lsd)
-	form.Set("__spin_r", rev); form.Set("__spin_b", "trunk"); form.Set("__spin_t", spinT)
-	form.Set("server_timestamps", "true"); form.Set("fb_api_caller_class", "RelayModern")
-	form.Set("fb_api_req_friendly_name", friendlyName)
-	form.Set("variables", string(varsJSON)); form.Set("doc_id", docID)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, graphqlEndpoint, strings.NewReader(form.Encode()))
-	if err != nil { return nil, fmt.Errorf("%w: building request: %v", ErrRequestFailed, err) }
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	c.setRequestHeaders(req, friendlyName, lsd)
-	req.Header.Set("Sec-Ch-Ua-Platform", `"macOS"`)
-	req.Header.Set("Sec-Ch-Ua", `"Chromium";v="131", "Not_A Brand";v="24"`)
-	req.Header.Set("Sec-Ch-Ua-Mobile", "?0")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil { return nil, fmt.Errorf("%w: %v", ErrRequestFailed, err) }
-	defer resp.Body.Close()
-
-	c.updateRateLimit(resp.Header)
-	switch {
-	case resp.StatusCode == http.StatusOK:
-	case resp.StatusCode == http.StatusUnauthorized: return nil, ErrSessionExpired
-	case resp.StatusCode == http.StatusForbidden: return nil, ErrForbidden
-	case resp.StatusCode == http.StatusNotFound: return nil, ErrNotFound
-	case resp.StatusCode == http.StatusTooManyRequests:
-		wait := parseRetryAfter(resp.Header.Get("Retry-After"), 60*time.Second)
-		c.rlMu.Lock()
-		c.rlState.Remaining = 0
-		c.rlState.RetryAfter = wait
-		if c.rlState.Reset.IsZero() || time.Until(c.rlState.Reset) < wait {
-			c.rlState.Reset = time.Now().Add(wait)
-		}
-		c.rlMu.Unlock()
-		c.gapMu.Lock()
-		if earliest := time.Now().Add(wait); c.lastReqAt.Before(earliest) {
-			c.lastReqAt = earliest
-		}
-		c.gapMu.Unlock()
-		return nil, fmt.Errorf("%w: retry after %s", ErrRateLimited, wait)
-	case resp.StatusCode >= 500: return nil, fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)
-	default: return nil, fmt.Errorf("%w: unexpected HTTP %d", ErrRequestFailed, resp.StatusCode)
+	res, err := c.dispatch(ctx, friendlyName, docID, varsJSON, true)
+	if err != nil {
+		return nil, err
 	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil { return nil, fmt.Errorf("%w: reading body: %v", ErrRequestFailed, err) }
-	return stripFBPrefix(body), nil
+	return res.Data, nil
 }
 
-// doGraphQL performs a single form-encoded POST to /api/graphql/.
-func (c *Client) doGraphQL(ctx context.Context, friendlyName, docID string, varsJSON []byte) (json.RawMessage, error) {
-	c.waitForGap(ctx)
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
+// decodeWrite decodes a mutation's data payload. Facebook answered without an
+// error, so a payload we cannot read means the write may have happened.
+func decodeWrite(raw json.RawMessage, v interface{}) error {
+	if err := json.Unmarshal(raw, v); err != nil {
+		return fmt.Errorf("%w: undecodable mutation payload: %v", ErrWriteUnknown, err)
 	}
+	return nil
+}
 
+func (c *Client) prepare(friendlyName string, variables interface{}) (string, []byte, error) {
+	docID := c.docID(friendlyName)
+	if docID == "" {
+		return "", nil, fmt.Errorf("%w: no doc_id registered for %q", ErrInvalidParams, friendlyName)
+	}
+	varsJSON, err := json.Marshal(variables)
+	if err != nil {
+		return "", nil, fmt.Errorf("%w: marshalling variables: %v", ErrInvalidParams, err)
+	}
+	return docID, varsJSON, nil
+}
+
+// sessionLost maps a failed re-bootstrap. A safety stop (checkpoint, block,
+// restriction, 429, gate refusal, cancellation) is returned as is; anything
+// else means the session could not be recovered.
+func sessionLost(bErr error) error {
+	switch {
+	case errors.Is(bErr, ErrSessionExpired),
+		errors.Is(bErr, ErrCheckpoint),
+		errors.Is(bErr, ErrFeatureBlocked),
+		errors.Is(bErr, ErrAccountRestricted),
+		errors.Is(bErr, ErrRateLimited),
+		errors.Is(bErr, context.Canceled),
+		errors.Is(bErr, context.DeadlineExceeded):
+		return bErr
+	}
+	var ge *gateError
+	if errors.As(bErr, &ge) {
+		return bErr
+	}
+	return fmt.Errorf("%w: re-bootstrap failed: %v", ErrSessionExpired, bErr)
+}
+
+// graphqlForm builds the form body every GraphQL POST carries.
+func (c *Client) graphqlForm(friendlyName, docID string, varsJSON []byte) (url.Values, string) {
 	dtsg, lsd, rev, hs, hsi, spinT, spinS, jazoest := c.session.snap()
 	req64 := strconv.FormatUint(c.reqCounter.Add(1), 16)
 
@@ -167,128 +203,165 @@ func (c *Client) doGraphQL(ctx context.Context, friendlyName, docID string, vars
 	form.Set("fb_api_req_friendly_name", friendlyName)
 	form.Set("variables", string(varsJSON))
 	form.Set("doc_id", docID)
+	return form, lsd
+}
 
+// dispatch performs a single form-encoded POST to /api/graphql/ and decodes
+// the answer. write selects the mutation error rules (ErrWriteUnknown).
+func (c *Client) dispatch(ctx context.Context, friendlyName, docID string, varsJSON []byte, write bool) (*gqlResult, error) {
+	form, lsd := c.graphqlForm(friendlyName, docID, varsJSON)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, graphqlEndpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("%w: building request: %v", ErrRequestFailed, err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	c.setRequestHeaders(req, friendlyName, lsd)
-	req.Header.Set("Sec-Ch-Ua-Platform", `"macOS"`)
-	req.Header.Set("Sec-Ch-Ua", `"Chromium";v="131", "Not_A Brand";v="24"`)
-	req.Header.Set("Sec-Ch-Ua-Mobile", "?0")
 
-	resp, err := c.httpClient.Do(req)
+	resp, preflight, err := c.roundTrip(ctx, req, friendlyName)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrRequestFailed, err)
+		switch {
+		case preflight:
+			return nil, err
+		case write && !definitelyNotSent(err):
+			return nil, fmt.Errorf("%w: transport error after dispatch: %w", ErrWriteUnknown, err)
+		}
+		return nil, fmt.Errorf("%w: %w", ErrRequestFailed, err)
 	}
 	defer resp.Body.Close()
-
-	c.updateRateLimit(resp.Header)
-	switch {
-	case resp.StatusCode == http.StatusOK:
-		// handled below
-	case resp.StatusCode == http.StatusUnauthorized:
-		return nil, ErrSessionExpired
-	case resp.StatusCode == http.StatusForbidden:
-		return nil, ErrForbidden
-	case resp.StatusCode == http.StatusNotFound:
-		return nil, ErrNotFound
-	case resp.StatusCode == http.StatusTooManyRequests:
-		wait := parseRetryAfter(resp.Header.Get("Retry-After"), 60*time.Second)
-		c.rlMu.Lock()
-		c.rlState.Remaining = 0
-		c.rlState.RetryAfter = wait
-		if c.rlState.Reset.IsZero() || time.Until(c.rlState.Reset) < wait {
-			c.rlState.Reset = time.Now().Add(wait)
-		}
-		c.rlMu.Unlock()
-		c.gapMu.Lock()
-		if earliest := time.Now().Add(wait); c.lastReqAt.Before(earliest) {
-			c.lastReqAt = earliest
-		}
-		c.gapMu.Unlock()
-		return nil, fmt.Errorf("%w: retry after %s", ErrRateLimited, wait)
-	case resp.StatusCode >= 500:
-		return nil, fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)
-	default:
-		return nil, fmt.Errorf("%w: unexpected HTTP %d", ErrRequestFailed, resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("%w: reading body: %v", ErrRequestFailed, err)
-	}
-
-	// Strip the XSS guard prefix that Facebook prepends to every response.
-	body = stripFBPrefix(body)
-
-	// Facebook sometimes returns multi-line JSON (one JSON object per line).
-	// Parse the first non-empty JSON object that contains "data".
-	lines := bytes.Split(body, []byte("\n"))
-	for _, line := range lines {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
-			continue
-		}
-
-		var envelope gqlEnvelope
-		if err := json.Unmarshal(line, &envelope); err != nil {
-			continue
-		}
-
-		if err := envelope.err(); err != nil {
-			return nil, err
-		}
-
-		if len(envelope.Data) > 0 && string(envelope.Data) != "null" {
-			return envelope.Data, nil
-		}
-	}
-
-	return nil, fmt.Errorf("%w: no data in response (body: %s)", ErrRequestFailed, truncate(string(body), 300))
+	return c.handleGraphQLResponse(req.URL, resp, friendlyName, write)
 }
 
-// graphqlAllLines is like graphql but returns ALL data payloads from a
-// multi-line response. Useful for streaming queries (like search) where
-// the results arrive across multiple JSON payloads.
-func (c *Client) graphqlAllLines(ctx context.Context, friendlyName string, variables interface{}) ([]json.RawMessage, error) {
-	docID := c.docID(friendlyName)
-	if docID == "" {
-		return nil, fmt.Errorf("%w: no doc_id registered for %q", ErrInvalidParams, friendlyName)
+// roundTrip sends one physical request: it waits for the request gap, asks
+// the request gate, sends with redirects disabled and absorbs Set-Cookie.
+// preflight is true when the error came before anything was handed to the
+// transport (gate refusal or cancellation); the caller returns it as is.
+func (c *Client) roundTrip(ctx context.Context, req *http.Request, friendlyName string) (*http.Response, bool, error) {
+	c.waitForGap(ctx)
+	if err := ctx.Err(); err != nil {
+		return nil, true, err
 	}
-	varsJSON, err := json.Marshal(variables)
+	if c.gate != nil {
+		if err := c.gate(ctx); err != nil {
+			return nil, true, &gateError{err: err}
+		}
+	}
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: marshalling variables: %v", ErrInvalidParams, err)
+		c.observe(0, friendlyName, "transport_error")
+		return nil, false, err
+	}
+	c.absorbSetCookies(req.URL, resp)
+	c.updateRateLimit(resp.Header)
+	return resp, false, nil
+}
+
+// definitelyNotSent reports transport errors that happen before any request
+// bytes can reach the server.
+func definitelyNotSent(err error) bool {
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "dial"
+}
+
+// handleGraphQLResponse maps one GraphQL HTTP response to data or an error
+// and records LastResponse.
+func (c *Client) handleGraphQLResponse(reqURL *url.URL, resp *http.Response, friendlyName string, write bool) (*gqlResult, error) {
+	status := resp.StatusCode
+	httpCode := "http_" + strconv.Itoa(status)
+
+	if status >= 300 && status < 400 {
+		target, _ := reqURL.Parse(resp.Header.Get("Location"))
+		switch classifyLocation(target) {
+		case locCheckpoint:
+			c.observe(status, friendlyName, "checkpoint_redirect")
+			return nil, fmt.Errorf("%w: redirected to a checkpoint", ErrCheckpoint)
+		case locRestricted:
+			c.observe(status, friendlyName, "restricted_redirect")
+			return nil, fmt.Errorf("%w: redirected to a disabled-account page", ErrAccountRestricted)
+		case locLogin:
+			c.observe(status, friendlyName, "login_redirect")
+			return nil, fmt.Errorf("%w: redirected to login", ErrSessionExpired)
+		}
+		c.observe(status, friendlyName, httpCode)
+		if write {
+			return nil, fmt.Errorf("%w: unexpected HTTP %d redirect", ErrWriteUnknown, status)
+		}
+		return nil, fmt.Errorf("%w: unexpected HTTP %d redirect", ErrRequestFailed, status)
 	}
 
-	raw, err := c.doGraphQLRaw(ctx, friendlyName, docID, varsJSON)
+	if status == http.StatusTooManyRequests {
+		wait := c.noteRetryAfter(resp.Header)
+		c.observe(status, friendlyName, httpCode)
+		return nil, fmt.Errorf("%w: retry after %s", ErrRateLimited, wait)
+	}
+
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
+
+	if status != http.StatusOK {
+		// An explicit Facebook safety or session error in the body is a
+		// definite answer, whatever the status.
+		if readErr == nil {
+			if _, code, ferr := parseGraphQLBody(body); ferr != nil && !errors.Is(ferr, ErrRequestFailed) {
+				c.observe(status, friendlyName, code)
+				return nil, ferr
+			}
+		}
+		c.observe(status, friendlyName, httpCode)
+		switch {
+		case status == http.StatusUnauthorized:
+			return nil, fmt.Errorf("%w: HTTP 401", ErrSessionExpired)
+		case status == http.StatusForbidden:
+			return nil, ErrForbidden
+		case status == http.StatusNotFound:
+			return nil, ErrNotFound
+		case status >= 500 && write:
+			return nil, fmt.Errorf("%w: HTTP %d", ErrWriteUnknown, status)
+		case status >= 500:
+			return nil, fmt.Errorf("%w: HTTP %d", ErrRequestFailed, status)
+		default:
+			return nil, fmt.Errorf("%w: unexpected HTTP %d", ErrRequestFailed, status)
+		}
+	}
+
+	if readErr != nil {
+		c.observe(status, friendlyName, "read_error")
+		if write {
+			return nil, fmt.Errorf("%w: reading body: %v", ErrWriteUnknown, readErr)
+		}
+		return nil, fmt.Errorf("%w: reading body: %v", ErrRequestFailed, readErr)
+	}
+
+	res, code, err := parseGraphQLBody(body)
+	c.observe(status, friendlyName, code)
 	if err != nil {
+		if write && (code == codeDecodeError || code == codeNoData) {
+			return nil, fmt.Errorf("%w: %v", ErrWriteUnknown, err)
+		}
 		return nil, err
 	}
+	return res, nil
+}
 
-	var allData []json.RawMessage
-	lines := bytes.Split(raw, []byte("\n"))
-	for _, line := range lines {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
-			continue
-		}
-		var envelope gqlEnvelope
-		if json.Unmarshal(line, &envelope) != nil {
-			continue
-		}
-		if err := envelope.err(); err != nil {
-			return nil, err
-		}
-		if len(envelope.Data) > 0 && string(envelope.Data) != "null" {
-			allData = append(allData, envelope.Data)
-		}
+// noteRetryAfter records a 429's Retry-After (default 60s) in the rate-limit
+// state and pushes the next allowed request time forward.
+func (c *Client) noteRetryAfter(h http.Header) time.Duration {
+	wait := parseRetryAfter(h.Get("Retry-After"), 60*time.Second)
+	c.rlMu.Lock()
+	c.rlState.Remaining = 0
+	c.rlState.RetryAfter = wait
+	if c.rlState.Reset.IsZero() || time.Until(c.rlState.Reset) < wait {
+		c.rlState.Reset = time.Now().Add(wait)
 	}
-	if len(allData) == 0 {
-		return nil, fmt.Errorf("%w: no data in multi-line response", ErrRequestFailed)
+	c.rlMu.Unlock()
+	c.gapMu.Lock()
+	if earliest := time.Now().Add(wait); c.lastReqAt.Before(earliest) {
+		c.lastReqAt = earliest
 	}
-	return allData, nil
+	c.gapMu.Unlock()
+	return wait
 }
 
 // waitForGap enforces the min request gap, honouring rate-limit state adaptively.
@@ -306,10 +379,12 @@ func (c *Client) waitForGap(ctx context.Context) {
 	c.gapMu.Unlock()
 
 	if wait := time.Until(next); wait > 0 {
+		t := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
-		case <-time.After(wait):
+		case <-t.C:
 		}
+		t.Stop()
 	}
 	c.rlMu.Lock()
 	c.rlState.RetryAfter = 0
@@ -318,8 +393,8 @@ func (c *Client) waitForGap(ctx context.Context) {
 
 // stripFBPrefix removes the "for (;;);" prefix Facebook adds for XSS protection.
 func stripFBPrefix(b []byte) []byte {
-	prefix := []byte("for (;;);")
-	if bytes.HasPrefix(b, prefix) {
+	const prefix = "for (;;);"
+	if len(b) >= len(prefix) && string(b[:len(prefix)]) == prefix {
 		return b[len(prefix):]
 	}
 	return b
@@ -330,7 +405,7 @@ func parseRetryAfter(val string, fallback time.Duration) time.Duration {
 	if val == "" {
 		return fallback
 	}
-	if secs, err := strconv.Atoi(strings.TrimSpace(val)); err == nil {
+	if secs, err := strconv.Atoi(strings.TrimSpace(val)); err == nil && secs >= 0 {
 		return time.Duration(secs) * time.Second
 	}
 	if t, err := http.ParseTime(val); err == nil {
@@ -398,9 +473,13 @@ func (c *Client) adaptiveGap() time.Duration {
 	return c.minGap
 }
 
-// isNonRetriable reports whether err should not be retried (4xx-class errors).
+// isNonRetriable reports whether err should not be retried.
 func isNonRetriable(err error) bool {
-	return errors.Is(err, ErrInvalidAuth) ||
+	var ge *gateError
+	return errors.As(err, &ge) ||
+		errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, ErrInvalidAuth) ||
 		errors.Is(err, ErrUnauthorized) ||
 		errors.Is(err, ErrForbidden) ||
 		errors.Is(err, ErrNotFound) ||
@@ -408,7 +487,12 @@ func isNonRetriable(err error) bool {
 		errors.Is(err, ErrDocIDStale) ||
 		errors.Is(err, ErrAlreadyMember) ||
 		errors.Is(err, ErrNotMember) ||
-		errors.Is(err, ErrSessionExpired)
+		errors.Is(err, ErrSessionExpired) ||
+		errors.Is(err, ErrCheckpoint) ||
+		errors.Is(err, ErrFeatureBlocked) ||
+		errors.Is(err, ErrAccountRestricted) ||
+		errors.Is(err, ErrSenderIdentityMismatch) ||
+		errors.Is(err, ErrWriteUnknown)
 }
 
 func truncate(s string, n int) string {

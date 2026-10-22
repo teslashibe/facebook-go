@@ -19,8 +19,8 @@ func (c *Client) SearchGroups(ctx context.Context, query string, opts ...SearchO
 	}
 
 	vars := mergeVars(map[string]interface{}{
-		"count":            so.limit,
-		"allow_streaming":  false,
+		"count":           so.limit,
+		"allow_streaming": false,
 		"args": map[string]interface{}{
 			"callsite": "COMET_GLOBAL_SEARCH",
 			"config": map[string]interface{}{
@@ -38,17 +38,17 @@ func (c *Client) SearchGroups(ctx context.Context, query string, opts ...SearchO
 			"filters": []interface{}{},
 			"text":    query,
 		},
-		"cursor":                     nil,
-		"feedLocation":               "SEARCH",
-		"feedbackSource":             23,
-		"fetch_filters":              true,
-		"focusCommentID":             nil,
-		"locale":                     nil,
+		"cursor":                        nil,
+		"feedLocation":                  "SEARCH",
+		"feedbackSource":                23,
+		"fetch_filters":                 true,
+		"focusCommentID":                nil,
+		"locale":                        nil,
 		"privacySelectorRenderLocation": "COMET_STREAM",
-		"renderLocation":             "search_results_page",
-		"scale":                      2,
-		"stream_initial_count":       0,
-		"useDefaultActor":            false,
+		"renderLocation":                "search_results_page",
+		"scale":                         2,
+		"stream_initial_count":          0,
+		"useDefaultActor":               false,
 	})
 
 	raw, err := c.graphql(ctx, "SearchCometResultsInitialResultsQuery", vars)
@@ -88,8 +88,10 @@ func (c *Client) DiscoverGroups(ctx context.Context) ([]GroupSearchResult, error
 	return data.groups(), nil
 }
 
-// MyGroups returns all groups the authenticated user is a member of, including
-// those with pending approval (PendingJoin: true).
+// MyGroups returns the first page of groups the authenticated user has
+// joined, as GroupsCometJoinsRootQuery returns them. Joined and PendingJoin
+// reflect the membership state each row carries. Use ListJoinedGroups to
+// page through every joined group.
 func (c *Client) MyGroups(ctx context.Context) ([]Group, error) {
 	vars := map[string]interface{}{
 		"ordering": []string{"integrity_signals"},
@@ -101,12 +103,50 @@ func (c *Client) MyGroups(ctx context.Context) ([]Group, error) {
 		return nil, err
 	}
 
-	var data myGroupsData
-	if err := unmarshalData(raw, &data); err != nil {
-		return nil, err
+	conn, ok := findGroupConnection(raw)
+	if !ok {
+		return nil, nil
+	}
+	return conn.toGroupPage().Groups, nil
+}
+
+const (
+	defaultGroupPageCount = 20
+	maxGroupPageCount     = 50
+)
+
+// ListJoinedGroups returns one page of the groups expectedUser has joined,
+// paging on GroupsCometAllJoinedGroupsSectionPaginationQuery. opts.Count 0
+// means 20; it is capped at 50. Pass GroupPage.NextCursor as opts.Cursor for
+// the next page. Group.Joined and Group.PendingJoin reflect each row's
+// membership state; a row without one is Joined.
+//
+// It fails with ErrSenderIdentityMismatch unless the session belongs to
+// expectedUser, and with ErrRequestFailed when the response carries no
+// joined-groups list at all (never an empty page for an unreadable answer).
+func (c *Client) ListJoinedGroups(ctx context.Context, expectedUser string, opts ListOptions) (GroupPage, error) {
+	if err := c.requireUser(expectedUser); err != nil {
+		return GroupPage{}, err
+	}
+	vars := map[string]interface{}{
+		"count":    clampCount(opts.Count, defaultGroupPageCount, maxGroupPageCount),
+		"cursor":   nil,
+		"ordering": []string{"integrity_signals"},
+		"scale":    2,
+	}
+	if opts.Cursor != "" {
+		vars["cursor"] = opts.Cursor
 	}
 
-	return data.groups(), nil
+	res, err := c.read(ctx, expectedUser, "GroupsCometAllJoinedGroupsSectionPaginationQuery", vars)
+	if err != nil {
+		return GroupPage{}, err
+	}
+	conn, ok := findGroupConnection(res.Data)
+	if !ok {
+		return GroupPage{}, fmt.Errorf("%w: joined-groups response has no tab_groups_list", ErrRequestFailed)
+	}
+	return conn.toGroupPage(), nil
 }
 
 // GetGroup retrieves metadata for a single group by its numeric ID.
@@ -172,13 +212,7 @@ func (c *Client) JoinGroup(ctx context.Context, groupID string) error {
 		return fmt.Errorf("%w: groupID must not be empty", ErrInvalidParams)
 	}
 
-	type variables struct {
-		GroupID     string `json:"groupID"`
-		Surface     string `json:"surface"`
-		IsSuggested bool   `json:"isSuggested"`
-	}
-
-	raw, err := c.graphql(ctx, "useGroupRequestToJoinMutation", map[string]interface{}{
+	raw, err := c.mutate(ctx, "useGroupRequestToJoinMutation", map[string]interface{}{
 		"groupID": groupID,
 		"source":  "GROUP_PAGE",
 	})
@@ -190,7 +224,7 @@ func (c *Client) JoinGroup(ctx context.Context, groupID string) error {
 	}
 
 	var data joinData
-	return unmarshalData(raw, &data)
+	return decodeWrite(raw, &data)
 }
 
 // LeaveGroup removes the authenticated user from the group.
@@ -200,13 +234,7 @@ func (c *Client) LeaveGroup(ctx context.Context, groupID string) error {
 		return fmt.Errorf("%w: groupID must not be empty", ErrInvalidParams)
 	}
 
-	type variables struct {
-		GroupID                  string `json:"groupID"`
-		Source                   string `json:"source"`
-		RevokeJoinRequestIfPending bool `json:"revokeJoinRequestIfPending"`
-	}
-
-	raw, err := c.graphql(ctx, "useGroupLeaveMutation", map[string]interface{}{
+	raw, err := c.mutate(ctx, "useGroupLeaveMutation", map[string]interface{}{
 		"groupID":                    groupID,
 		"source":                     "GROUP_HEADER_DROPDOWN",
 		"revokeJoinRequestIfPending": true,
@@ -219,7 +247,7 @@ func (c *Client) LeaveGroup(ctx context.Context, groupID string) error {
 	}
 
 	var data leaveData
-	return unmarshalData(raw, &data)
+	return decodeWrite(raw, &data)
 }
 
 // CreateGroup creates a new Facebook Group and returns its metadata.
@@ -242,7 +270,7 @@ func (c *Client) CreateGroup(ctx context.Context, params CreateGroupParams) (*Gr
 		Input createInput `json:"input"`
 	}
 
-	raw, err := c.graphql(ctx, "useGroupsCometCreateMutation", variables{
+	raw, err := c.mutate(ctx, "useGroupsCometCreateMutation", variables{
 		Input: createInput{
 			Name:        params.Name,
 			Description: params.Description,
@@ -254,11 +282,11 @@ func (c *Client) CreateGroup(ctx context.Context, params CreateGroupParams) (*Gr
 	}
 
 	var data createGroupData
-	if err := unmarshalData(raw, &data); err != nil {
+	if err := decodeWrite(raw, &data); err != nil {
 		return nil, err
 	}
 	if data.GroupCreate == nil || data.GroupCreate.Group == nil {
-		return nil, fmt.Errorf("%w: server returned no group after creation", ErrRequestFailed)
+		return nil, fmt.Errorf("%w: server returned no group after creation", ErrWriteUnknown)
 	}
 
 	g := data.GroupCreate.Group.toGroup()

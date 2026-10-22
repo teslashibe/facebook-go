@@ -19,4 +19,10 @@
 //	    PSL:   "1",
 //	})
 //	results, err := c.SearchGroups(ctx, "golang developers")
+//
+// Reads that watch groups for a known account take the expected Facebook
+// user id and fail with [ErrSenderIdentityMismatch] for any other session:
+// [Client.ListJoinedGroups], [Client.ListGroupPosts] and [Client.PostsSince].
+// Mutations are sent once and return [ErrWriteUnknown] when the outcome is
+// unknown; they are never retried.
 package groups

@@ -7,7 +7,8 @@ import (
 
 // CreatePost publishes a text post to the specified group.
 // message must not be empty. Use WithPostAttachmentURL to attach a link.
-// Returns ErrForbidden if the user is not a member of the group.
+// Returns ErrForbidden if the user is not a member of the group. The mutation
+// is sent once and never retried; ErrWriteUnknown means it may have posted.
 func (c *Client) CreatePost(ctx context.Context, groupID, message string, opts ...PostOption) (*Post, error) {
 	if groupID == "" {
 		return nil, fmt.Errorf("%w: groupID must not be empty", ErrInvalidParams)
@@ -30,12 +31,12 @@ func (c *Client) CreatePost(ctx context.Context, groupID, message string, opts .
 		Ranges []textRange `json:"ranges"`
 	}
 	type postInput struct {
-		ComposerType    string         `json:"composer_type"`
-		ComposerContext composerContext `json:"composer_context"`
-		Message         messageInput   `json:"message"`
-		ActorID         string         `json:"actor_id"`
-		ClientMutationID string        `json:"client_mutation_id"`
-		AttachmentURL   string         `json:"attachment_url,omitempty"`
+		ComposerType     string          `json:"composer_type"`
+		ComposerContext  composerContext `json:"composer_context"`
+		Message          messageInput    `json:"message"`
+		ActorID          string          `json:"actor_id"`
+		ClientMutationID string          `json:"client_mutation_id"`
+		AttachmentURL    string          `json:"attachment_url,omitempty"`
 	}
 	type variables struct {
 		Input postInput `json:"input"`
@@ -52,19 +53,21 @@ func (c *Client) CreatePost(ctx context.Context, groupID, message string, opts .
 		input.AttachmentURL = po.attachmentURL
 	}
 
-	raw, err := c.graphql(ctx, "ComposerStoryCreateMutation", variables{Input: input})
+	raw, err := c.mutate(ctx, "ComposerStoryCreateMutation", variables{Input: input})
 	if err != nil {
 		return nil, err
 	}
 
 	var data createPostData
-	if err := unmarshalData(raw, &data); err != nil {
+	if err := decodeWrite(raw, &data); err != nil {
 		return nil, err
 	}
-	if data.StoryCreate == nil || data.StoryCreate.Story == nil {
-		return nil, fmt.Errorf("%w: server returned no story after post creation", ErrRequestFailed)
+	if data.StoryCreate == nil || !hasData(data.StoryCreate.Story) {
+		return nil, fmt.Errorf("%w: server returned no story after post creation", ErrWriteUnknown)
 	}
-
-	p := data.StoryCreate.Story.toPost(groupID)
+	p, ok := parseStory(data.StoryCreate.Story, groupID, false)
+	if !ok {
+		return nil, fmt.Errorf("%w: server returned a story without an id", ErrWriteUnknown)
+	}
 	return &p, nil
 }

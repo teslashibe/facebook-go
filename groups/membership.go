@@ -73,11 +73,11 @@ func (c *Client) JoinGroupWithAnswers(ctx context.Context, groupID string, answe
 		"membership_answers": answerInputs,
 	}
 
-	raw, err := c.graphql(ctx, "useGroupRequestToJoinMutation", vars)
+	raw, err := c.mutate(ctx, "useGroupRequestToJoinMutation", vars)
 	if err != nil {
 		return err
 	}
 
 	var data joinData
-	return unmarshalData(raw, &data)
+	return decodeWrite(raw, &data)
 }
