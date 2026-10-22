@@ -33,8 +33,8 @@ func (r RateLimitState) ResetIn() time.Duration {
 }
 
 // Cookies holds the Facebook session cookies obtained from a browser export.
-// All six fields are required for full write access. xs and CUser are the
-// most critical — the others strengthen fingerprint matching.
+// CUser and XS are required (either as fields or in Jar); the others
+// strengthen fingerprint matching.
 type Cookies struct {
 	SB    string // sb: browser session fingerprint
 	DATR  string // datr: device auth token
@@ -43,6 +43,27 @@ type Cookies struct {
 	FR    string // fr: friend-request + ad-tracking token
 	PSL   string // ps_l: presence/status
 	PSN   string // ps_n: presence/status (secondary)
+
+	// Jar optionally carries every facebook.com cookie by name. When set, the
+	// Cookie header carries the whole jar. Non-empty named fields above win
+	// over the same cookie in Jar.
+	Jar map[string]string
+}
+
+// Identity is the logged-in user read from the bootstrap page.
+type Identity struct {
+	UserID     string `json:"userId"`
+	Name       string `json:"name"`
+	ProfileURL string `json:"profileUrl"`
+}
+
+// ResponseInfo describes the most recent physical response. Code is a short
+// safe code ("ok", "http_429", "gql_368", "checkpoint_redirect", ...), never a
+// body.
+type ResponseInfo struct {
+	Status       int    `json:"status"`
+	FriendlyName string `json:"friendlyName,omitempty"`
+	Code         string `json:"code,omitempty"`
 }
 
 // Privacy is the visibility level of a Facebook Group.
@@ -69,15 +90,36 @@ type Group struct {
 	CreatedAt   time.Time `json:"createdAt,omitempty"`
 }
 
+// AuthorKind says who posted a story.
+type AuthorKind string
+
+const (
+	AuthorPerson    AuthorKind = "person"
+	AuthorPage      AuthorKind = "page"
+	AuthorAnonymous AuthorKind = "anonymous"
+	AuthorUnknown   AuthorKind = "unknown"
+)
+
+// Author is the poster of a story, decoded from the story's actor.
+type Author struct {
+	ID         string     `json:"id,omitempty"`
+	Name       string     `json:"name,omitempty"`
+	ProfileURL string     `json:"profileUrl,omitempty"`
+	Kind       AuthorKind `json:"kind"`
+}
+
 // Post represents a group post / story node.
 // FeedbackID is required for comment and reaction mutations — it differs from ID.
 type Post struct {
 	ID            string    `json:"id"`
+	StoryID       string    `json:"storyId,omitempty"`
 	FeedbackID    string    `json:"feedbackId"`
 	GroupID       string    `json:"groupId,omitempty"`
-	AuthorID      string    `json:"authorId,omitempty"`
-	AuthorName    string    `json:"authorName,omitempty"`
+	Author        Author    `json:"author"`
+	AuthorID      string    `json:"authorId,omitempty"`   // mirrors Author.ID
+	AuthorName    string    `json:"authorName,omitempty"` // mirrors Author.Name
 	Message       string    `json:"message,omitempty"`
+	Permalink     string    `json:"permalink,omitempty"`
 	Attachments   []string  `json:"attachments,omitempty"`
 	ReactionCount int       `json:"reactionCount"`
 	CommentCount  int       `json:"commentCount"`
@@ -120,6 +162,40 @@ type FeedPage struct {
 	Posts      []Post `json:"posts"`
 	NextCursor string `json:"nextCursor,omitempty"`
 	HasNext    bool   `json:"hasNext"`
+}
+
+// ListOptions pages ListJoinedGroups. Count 0 means the default (20); it is
+// capped at 50.
+type ListOptions struct {
+	Cursor string
+	Count  int
+}
+
+// GroupPage is one page of joined groups with a cursor for the next page.
+type GroupPage struct {
+	Groups     []Group `json:"groups"`
+	NextCursor string  `json:"nextCursor,omitempty"`
+	HasNext    bool    `json:"hasNext"`
+}
+
+// PostSort is a group feed order (the GraphQL sortingSetting).
+type PostSort string
+
+const (
+	// SortChronological is "New posts": newest post first.
+	SortChronological PostSort = "CHRONOLOGICAL"
+	// SortRecentActivity is "Newest activity".
+	SortRecentActivity PostSort = "RECENT_ACTIVITY"
+	// SortTopPosts is "Most relevant".
+	SortTopPosts PostSort = "TOP_POSTS"
+)
+
+// PostListOptions pages ListGroupPosts. The default Sort is
+// SortChronological and the default Count is 10, capped at 20.
+type PostListOptions struct {
+	Sort   PostSort
+	Cursor string
+	Count  int
 }
 
 // CommentPage is one page of post comments with a cursor for the next page.

@@ -8,84 +8,6 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// GraphQL envelope
-// ---------------------------------------------------------------------------
-
-// gqlEnvelope is the top-level shape returned by every /api/graphql/ call.
-// Facebook wraps all responses with "for (;;);" (stripped by client.go) and
-// the body is always JSON matching this shape.
-type gqlEnvelope struct {
-	Data   json.RawMessage `json:"data"`
-	Errors []gqlError      `json:"errors"`
-}
-
-type gqlError struct {
-	Message string `json:"message"`
-	// api_error_code 1357001 = not logged in, 368 = blocked, etc.
-	Code     int    `json:"api_error_code"`
-	Severity string `json:"severity"`
-	// type is set to "OAuthException" for auth failures.
-	Type string `json:"type"`
-}
-
-// err converts the error list into a Go error, mapping known codes to
-// the package sentinels.
-//
-// Facebook frequently returns "WARNING" severity errors alongside successful
-// data (e.g. missing relay provider variables that don't actually break the
-// query). We only treat CRITICAL and unspecified-severity errors as failures.
-// Callers will still receive the data when only warnings are present.
-func (e *gqlEnvelope) err() error {
-	if len(e.Errors) == 0 {
-		return nil
-	}
-	// Find the first non-WARNING error. If all errors are warnings AND data
-	// is present, treat the response as a success.
-	var first gqlError
-	hasNonWarning := false
-	for _, err := range e.Errors {
-		if !strings.EqualFold(err.Severity, "WARNING") {
-			first = err
-			hasNonWarning = true
-			break
-		}
-	}
-	if !hasNonWarning {
-		// All warnings — only treat as error if there's no data.
-		if len(e.Data) > 0 && string(e.Data) != "null" {
-			return nil
-		}
-		first = e.Errors[0]
-	}
-	msg := strings.ToLower(first.Message)
-
-	switch {
-	case first.Code == 1357001 || first.Type == "OAuthException" ||
-		strings.Contains(msg, "not logged in") || strings.Contains(msg, "session"):
-		return ErrSessionExpired
-
-	case strings.Contains(msg, "already a member"), strings.Contains(msg, "already joined"):
-		return ErrAlreadyMember
-
-	case strings.Contains(msg, "not a member"), strings.Contains(msg, "not member"):
-		return ErrNotMember
-
-	case strings.Contains(msg, "does not exist"), strings.Contains(msg, "deleted"),
-		strings.Contains(msg, "not found"):
-		if strings.Contains(msg, "document") || strings.Contains(msg, "doc_id") {
-			return ErrDocIDStale
-		}
-		return ErrNotFound
-
-	case strings.Contains(msg, "permission"), strings.Contains(msg, "forbidden"),
-		strings.Contains(msg, "not allowed"), strings.Contains(msg, "access denied"):
-		return ErrForbidden
-	}
-
-	return fmt.Errorf("%w: %s (code %d)", ErrRequestFailed, first.Message, first.Code)
-}
-
-// ---------------------------------------------------------------------------
 // Shared sub-shapes
 // ---------------------------------------------------------------------------
 
@@ -112,14 +34,6 @@ type fbPrivacyInfo struct {
 }
 
 type fbReactionCount struct {
-	Count int `json:"count"`
-}
-
-type fbCommentCount struct {
-	TotalCount int `json:"total_count"`
-}
-
-type fbShareCount struct {
 	Count int `json:"count"`
 }
 
@@ -196,75 +110,10 @@ func (g *fbGroupSearchResult) toSearchResult() GroupSearchResult {
 	return out
 }
 
-// fbStory represents a single news feed story (post).
-type fbStory struct {
-	ID           string      `json:"id"`
-	Feedback     *fbFeedback `json:"feedback"`
-	Actors       []fbActor   `json:"actors"`
-	Message      *fbText     `json:"message"`
-	CreationTime int64       `json:"creation_time"`
-	EditedTime   int64       `json:"edited_time"`
-	// Attachments contain URLs for linked content.
-	Attachments []fbAttachment `json:"attachments"`
-}
-
+// fbFeedback is the feedback node on a comment.
 type fbFeedback struct {
-	ID              string           `json:"id"`
-	ReactionCount   *fbReactionCount `json:"reaction_count"`
-	CommentCount    *fbCommentCount  `json:"comment_count"`
-	ShareCount      *fbShareCount    `json:"share_count"`
-	OwningProfile   *fbActor         `json:"owning_profile"`
-	AssociatedGroup *struct {
-		ID string `json:"id"`
-	} `json:"associated_group"`
-}
-
-type fbAttachment struct {
-	Media *struct {
-		PlayableURL string   `json:"playable_url"`
-		Image       *fbImage `json:"image"`
-	} `json:"media"`
-	URL string `json:"url"`
-}
-
-func (s *fbStory) toPost(groupID string) Post {
-	p := Post{
-		ID:      s.ID,
-		GroupID: groupID,
-	}
-	if s.Feedback != nil {
-		p.FeedbackID = s.Feedback.ID
-		if s.Feedback.ReactionCount != nil {
-			p.ReactionCount = s.Feedback.ReactionCount.Count
-		}
-		if s.Feedback.CommentCount != nil {
-			p.CommentCount = s.Feedback.CommentCount.TotalCount
-		}
-		if s.Feedback.ShareCount != nil {
-			p.ShareCount = s.Feedback.ShareCount.Count
-		}
-	}
-	if len(s.Actors) > 0 {
-		p.AuthorID = s.Actors[0].ID
-		p.AuthorName = s.Actors[0].Name
-	}
-	if s.Message != nil {
-		p.Message = s.Message.Text
-	}
-	if s.CreationTime > 0 {
-		p.CreatedAt = time.Unix(s.CreationTime, 0).UTC()
-	}
-	if s.EditedTime > 0 {
-		p.UpdatedAt = time.Unix(s.EditedTime, 0).UTC()
-	}
-	for _, a := range s.Attachments {
-		if a.URL != "" {
-			p.Attachments = append(p.Attachments, a.URL)
-		} else if a.Media != nil && a.Media.Image != nil {
-			p.Attachments = append(p.Attachments, a.Media.Image.URI)
-		}
-	}
-	return p
+	ID            string           `json:"id"`
+	ReactionCount *fbReactionCount `json:"reaction_count"`
 }
 
 // fbComment represents a single comment node.
@@ -374,77 +223,6 @@ func (d *participationQuestionsData) toQuestions() []MembershipQuestion {
 	return out
 }
 
-// --- Single-group feed ---
-// Response: group.group_feed.edges[].node (may be Story or section header)
-
-type singleFeedData struct {
-	Group *struct {
-		ID        string `json:"id"`
-		GroupFeed *struct {
-			Edges    []singleFeedEdge `json:"edges"`
-			PageInfo *fbPageInfo      `json:"page_info"`
-		} `json:"group_feed"`
-	} `json:"group"`
-}
-
-type singleFeedEdge struct {
-	Node *singleFeedNode `json:"node"`
-}
-
-type singleFeedNode struct {
-	Typename     string      `json:"__typename"`
-	ID           string      `json:"id"`
-	PostID       string      `json:"post_id"`
-	Feedback     *fbFeedback `json:"feedback"`
-	Message      *fbText     `json:"message"`
-	CreationTime int64       `json:"creation_time"`
-}
-
-func (d *singleFeedData) toFeedPage() FeedPage {
-	if d.Group == nil || d.Group.GroupFeed == nil {
-		return FeedPage{}
-	}
-	gid := d.Group.ID
-	page := FeedPage{}
-	for _, e := range d.Group.GroupFeed.Edges {
-		if e.Node == nil || e.Node.Typename != "Story" {
-			continue
-		}
-		p := Post{
-			ID:      e.Node.PostID,
-			GroupID: gid,
-		}
-		if p.ID == "" {
-			p.ID = e.Node.ID
-		}
-		if e.Node.Feedback != nil {
-			p.FeedbackID = e.Node.Feedback.ID
-			if e.Node.Feedback.OwningProfile != nil {
-				p.AuthorID = e.Node.Feedback.OwningProfile.ID
-				p.AuthorName = e.Node.Feedback.OwningProfile.Name
-			}
-			if e.Node.Feedback.ReactionCount != nil {
-				p.ReactionCount = e.Node.Feedback.ReactionCount.Count
-			}
-			if e.Node.Feedback.CommentCount != nil {
-				p.CommentCount = e.Node.Feedback.CommentCount.TotalCount
-			}
-			if e.Node.Feedback.ShareCount != nil {
-				p.ShareCount = e.Node.Feedback.ShareCount.Count
-			}
-		}
-		if e.Node.Message != nil {
-			p.Message = e.Node.Message.Text
-		}
-		page.Posts = append(page.Posts, p)
-	}
-	if pi := d.Group.GroupFeed.PageInfo; pi != nil {
-		page.HasNext = pi.HasNextPage
-		page.NextCursor = pi.EndCursor
-	}
-	return page
-}
-
 // --- Discover suggestions ---
 // Response: viewer.categories.discover_tab.units.edges[].node
 // Node types: GroupsTabGroupSuggestionRowUnit (has group), GroupsSuggestionUnit (section header)
@@ -507,51 +285,111 @@ func (d *discoverData) groups() []GroupSearchResult {
 	return out
 }
 
-// --- My Groups ---
+// --- Joined groups ---
+// GroupsCometJoinsRootQuery and GroupsCometAllJoinedGroupsSectionPaginationQuery
+// both answer with a tab_groups_list connection, normally at
+// viewer.all_joined_groups.tab_groups_list.
 
-type myGroupsData struct {
-	Viewer *struct {
-		AllJoinedGroups *struct {
-			TabGroupsList *struct {
-				Edges []struct {
-					Node *fbMyGroupNode `json:"node"`
-				} `json:"edges"`
-			} `json:"tab_groups_list"`
-		} `json:"all_joined_groups"`
-	} `json:"viewer"`
+type fbGroupConnection struct {
+	Edges []struct {
+		Node *fbJoinedGroupNode `json:"node"`
+	} `json:"edges"`
+	PageInfo *fbPageInfo `json:"page_info"`
 }
 
-type fbMyGroupNode struct {
+type fbJoinedGroupNode struct {
 	ID             string `json:"id"`
 	Name           string `json:"name"`
 	URL            string `json:"url"`
 	ProfilePicture *struct {
 		URI string `json:"uri"`
 	} `json:"profile_picture"`
+	PrivacyInfo fbPrivacyInfo `json:"privacy_info"`
+	MemberCount int           `json:"member_count"`
+	// Membership state; whichever the response carries.
+	ViewerJoinState        string `json:"viewer_join_state"`
+	ViewerForumJoinState   string `json:"viewer_forum_join_state"`
+	ViewerMembershipStatus string `json:"viewer_actor_membership_status"`
 }
 
-func (d *myGroupsData) groups() []Group {
-	if d.Viewer == nil || d.Viewer.AllJoinedGroups == nil || d.Viewer.AllJoinedGroups.TabGroupsList == nil {
-		return nil
+// membershipState maps Facebook's join-state values. known is false when no
+// state field was present.
+func membershipState(states ...string) (joined, pending, known bool) {
+	for _, s := range states {
+		switch strings.ToUpper(strings.TrimSpace(s)) {
+		case "":
+			continue
+		case "MEMBER", "JOINED", "IS_MEMBER", "ADMIN", "MODERATOR":
+			return true, false, true
+		case "PENDING", "REQUESTED", "PENDING_REQUEST", "PENDING_APPROVAL", "CAN_CANCEL_REQUEST":
+			return false, true, true
+		default: // CAN_JOIN, NOT_MEMBER, CAN_REQUEST, ...
+			return false, false, true
+		}
 	}
-	edges := d.Viewer.AllJoinedGroups.TabGroupsList.Edges
-	out := make([]Group, 0, len(edges))
-	for _, e := range edges {
-		if e.Node == nil {
+	return false, false, false
+}
+
+// toGroup converts a joined-groups row. A row with no membership state is
+// reported as Joined: Facebook lists it in the joined-groups section.
+func (n *fbJoinedGroupNode) toGroup() Group {
+	g := Group{
+		ID:          n.ID,
+		Name:        n.Name,
+		URL:         n.URL,
+		MemberCount: n.MemberCount,
+		Privacy:     Privacy(strings.ToUpper(n.PrivacyInfo.PrivacyType)),
+	}
+	if n.ProfilePicture != nil {
+		g.CoverURL = n.ProfilePicture.URI
+	}
+	joined, pending, known := membershipState(n.ViewerMembershipStatus, n.ViewerJoinState, n.ViewerForumJoinState)
+	if !known {
+		joined = true
+	}
+	g.Joined, g.PendingJoin = joined, pending
+	return g
+}
+
+// findGroupConnection locates the tab_groups_list connection in a joined-groups
+// response: at viewer.all_joined_groups.tab_groups_list, or anywhere else a
+// tab_groups_list object appears. found is false when there is none.
+func findGroupConnection(raw json.RawMessage) (fbGroupConnection, bool) {
+	var conn fbGroupConnection
+	root, ok := decodeObject(raw)
+	if !ok {
+		return conn, false
+	}
+	list := dig(root, "viewer", "all_joined_groups", "tab_groups_list")
+	if _, isObj := list.(map[string]any); !isObj {
+		list = deepFind(root, "tab_groups_list", func(v any) bool {
+			_, ok := v.(map[string]any)
+			return ok
+		})
+	}
+	if list == nil {
+		return conn, false
+	}
+	b, err := json.Marshal(list)
+	if err != nil || json.Unmarshal(b, &conn) != nil {
+		return conn, false
+	}
+	return conn, true
+}
+
+func (conn fbGroupConnection) toGroupPage() GroupPage {
+	page := GroupPage{Groups: make([]Group, 0, len(conn.Edges))}
+	for _, e := range conn.Edges {
+		if e.Node == nil || e.Node.ID == "" {
 			continue
 		}
-		g := Group{
-			ID:     e.Node.ID,
-			Name:   e.Node.Name,
-			URL:    e.Node.URL,
-			Joined: true,
-		}
-		if e.Node.ProfilePicture != nil {
-			g.CoverURL = e.Node.ProfilePicture.URI
-		}
-		out = append(out, g)
+		page.Groups = append(page.Groups, e.Node.toGroup())
 	}
-	return out
+	if pi := conn.PageInfo; pi != nil {
+		page.NextCursor = pi.EndCursor
+		page.HasNext = pi.HasNextPage && pi.EndCursor != ""
+	}
+	return page
 }
 
 // --- Group info ---
@@ -560,30 +398,20 @@ type groupData struct {
 	Group *fbGroup `json:"group"`
 }
 
-// --- Cross-group feed (first page) ---
+// --- Cross-group feed ---
 // Response: viewer.groups_tab.cross_group_feed.edges[]
 
 type feedData struct {
 	Viewer *struct {
 		GroupsTab *struct {
 			CrossGroupFeed *struct {
-				Edges    []crossFeedEdge `json:"edges"`
-				PageInfo *fbPageInfo     `json:"page_info"`
+				Edges []struct {
+					Node json.RawMessage `json:"node"`
+				} `json:"edges"`
+				PageInfo *fbPageInfo `json:"page_info"`
 			} `json:"cross_group_feed"`
 		} `json:"groups_tab"`
 	} `json:"viewer"`
-}
-
-type crossFeedEdge struct {
-	Node *crossFeedNode `json:"node"`
-}
-
-type crossFeedNode struct {
-	Typename    string         `json:"__typename"`
-	ID          string         `json:"id"`
-	PostID      string         `json:"post_id"`
-	Feedback    *fbFeedback    `json:"feedback"`
-	Attachments []fbAttachment `json:"attachments"`
 }
 
 func (d *feedData) toFeedPage() FeedPage {
@@ -593,49 +421,18 @@ func (d *feedData) toFeedPage() FeedPage {
 	cgf := d.Viewer.GroupsTab.CrossGroupFeed
 	page := FeedPage{}
 	for _, e := range cgf.Edges {
-		if e.Node == nil {
+		if !hasData(e.Node) {
 			continue
 		}
-		p := Post{
-			ID: e.Node.PostID,
+		if p, ok := parseStory(e.Node, "", false); ok {
+			page.Posts = append(page.Posts, p)
 		}
-		if p.ID == "" {
-			p.ID = e.Node.ID
-		}
-		if e.Node.Feedback != nil {
-			p.FeedbackID = e.Node.Feedback.ID
-			if e.Node.Feedback.OwningProfile != nil {
-				p.AuthorID = e.Node.Feedback.OwningProfile.ID
-				p.AuthorName = e.Node.Feedback.OwningProfile.Name
-			}
-			if e.Node.Feedback.AssociatedGroup != nil {
-				p.GroupID = e.Node.Feedback.AssociatedGroup.ID
-			}
-			if e.Node.Feedback.ReactionCount != nil {
-				p.ReactionCount = e.Node.Feedback.ReactionCount.Count
-			}
-			if e.Node.Feedback.CommentCount != nil {
-				p.CommentCount = e.Node.Feedback.CommentCount.TotalCount
-			}
-			if e.Node.Feedback.ShareCount != nil {
-				p.ShareCount = e.Node.Feedback.ShareCount.Count
-			}
-		}
-		page.Posts = append(page.Posts, p)
 	}
 	if pi := cgf.PageInfo; pi != nil {
 		page.HasNext = pi.HasNextPage
 		page.NextCursor = pi.EndCursor
 	}
 	return page
-}
-
-// --- Cross-group feed pagination ---
-
-type feedPaginationData feedData
-
-func (d *feedPaginationData) toFeedPage() FeedPage {
-	return (*feedData)(d).toFeedPage()
 }
 
 // --- Join / Leave mutations ---
@@ -668,7 +465,7 @@ type createGroupData struct {
 
 type createPostData struct {
 	StoryCreate *struct {
-		Story *fbStory `json:"story"`
+		Story json.RawMessage `json:"story"`
 	} `json:"story_create"`
 }
 
@@ -837,11 +634,11 @@ func (d *membersData) totalCount() int {
 	return 0
 }
 
-// unmarshalData is a helper that decodes a json.RawMessage into v.
+// unmarshalData decodes a read's data payload into v. The error never quotes
+// the payload, which can carry names and post text.
 func unmarshalData(raw json.RawMessage, v interface{}) error {
 	if err := json.Unmarshal(raw, v); err != nil {
-		return fmt.Errorf("%w: decoding response data: %v (snippet: %s)",
-			ErrRequestFailed, err, truncate(string(raw), 300))
+		return fmt.Errorf("%w: decoding response data: %v", ErrRequestFailed, err)
 	}
 	return nil
 }

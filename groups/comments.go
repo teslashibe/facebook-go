@@ -49,7 +49,8 @@ func (c *Client) GetPostCommentsPage(ctx context.Context, feedbackID, cursor str
 }
 
 // CreateComment posts a text comment on the given feedback node.
-// feedbackID is Post.FeedbackID (not Post.ID).
+// feedbackID is Post.FeedbackID (not Post.ID). The mutation is sent once and
+// never retried; ErrWriteUnknown means the comment may have been posted.
 func (c *Client) CreateComment(ctx context.Context, feedbackID, message string) (*Comment, error) {
 	if feedbackID == "" {
 		return nil, fmt.Errorf("%w: feedbackID must not be empty", ErrInvalidParams)
@@ -74,7 +75,7 @@ func (c *Client) CreateComment(ctx context.Context, feedbackID, message string) 
 		Input commentInput `json:"input"`
 	}
 
-	raw, err := c.graphql(ctx, "useCometUFICreateCommentMutation", variables{
+	raw, err := c.mutate(ctx, "useCometUFICreateCommentMutation", variables{
 		Input: commentInput{
 			FeedbackID:          feedbackID,
 			Message:             messageInput{Text: message},
@@ -90,11 +91,11 @@ func (c *Client) CreateComment(ctx context.Context, feedbackID, message string) 
 	}
 
 	var data createCommentData
-	if err := unmarshalData(raw, &data); err != nil {
+	if err := decodeWrite(raw, &data); err != nil {
 		return nil, err
 	}
 	if data.CommentCreate == nil || data.CommentCreate.Comment == nil {
-		return nil, fmt.Errorf("%w: server returned no comment after creation", ErrRequestFailed)
+		return nil, fmt.Errorf("%w: server returned no comment after creation", ErrWriteUnknown)
 	}
 
 	comment := data.CommentCreate.Comment.toComment()
@@ -121,7 +122,7 @@ func (c *Client) ReactToPost(ctx context.Context, feedbackID string, reaction Re
 		Scale           int        `json:"scale"`
 	}
 
-	raw, err := c.graphql(ctx, "CometUFIFeedbackReactMutation", variables{
+	raw, err := c.mutate(ctx, "CometUFIFeedbackReactMutation", variables{
 		Input: reactInput{
 			FeedbackID:       feedbackID,
 			FeedbackReaction: string(reaction),
@@ -136,5 +137,5 @@ func (c *Client) ReactToPost(ctx context.Context, feedbackID string, reaction Re
 	}
 
 	var data reactData
-	return unmarshalData(raw, &data)
+	return decodeWrite(raw, &data)
 }
