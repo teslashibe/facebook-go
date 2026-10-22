@@ -28,15 +28,15 @@ type sessionState struct {
 
 // Regexes for token extraction from the HTML page source.
 var (
-	reDTSG    = regexp.MustCompile(`"DTSGInitialData"[^{]*\{"token":"([^"]+)"`)
-	reLSD     = regexp.MustCompile(`"LSD"[^{]*\{"token":"([^"]+)"`)
-	reRev     = regexp.MustCompile(`"client_revision"\s*:\s*(\d+)`)
-	reHs      = regexp.MustCompile(`"haste_session"\s*:\s*"([^"]+)"`)
-	reHsi     = regexp.MustCompile(`"hsi"\s*:\s*"(\d+)"`)
-	reSpinT   = regexp.MustCompile(`"_?_?spin_t"\s*:\s*(\d+)`)
-	reSpinS   = regexp.MustCompile(`"_?_?spin_s"\s*:\s*"([^"]+)"`)
-	reDocID   = regexp.MustCompile(`"queryID"\s*:\s*"(\d{10,})"`)
-	reQName   = regexp.MustCompile(`"((?:Groups|Comet|Comment|Composer|Feedback|Member|UFI)[A-Za-z_]+(?:Query|Mutation))"`)
+	reDTSG  = regexp.MustCompile(`"DTSGInitialData"[^{]*\{"token":"([^"]+)"`)
+	reLSD   = regexp.MustCompile(`"LSD"[^{]*\{"token":"([^"]+)"`)
+	reRev   = regexp.MustCompile(`"client_revision"\s*:\s*(\d+)`)
+	reHs    = regexp.MustCompile(`"haste_session"\s*:\s*"([^"]+)"`)
+	reHsi   = regexp.MustCompile(`"hsi"\s*:\s*"(\d+)"`)
+	reSpinT = regexp.MustCompile(`"_?_?spin_t"\s*:\s*(\d+)`)
+	reSpinS = regexp.MustCompile(`"_?_?spin_s"\s*:\s*"([^"]+)"`)
+	reDocID = regexp.MustCompile(`"queryID"\s*:\s*"(\d{10,})"`)
+	reQName = regexp.MustCompile(`"((?:Groups|Comet|Comment|Composer|Feedback|Member|UFI)[A-Za-z_]+(?:Query|Mutation))"`)
 )
 
 // bootstrap performs a single authenticated GET to /groups/feed/ and extracts

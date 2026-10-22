@@ -26,81 +26,81 @@ const (
 // These rotate with each code deploy; override via WithDocIDs.
 var defaultDocIDs = map[string]string{
 	// Groups — core
-	"GroupsCometCrossGroupFeedContainerQuery":    "26735348219462271",
-	"GroupsCometCrossGroupFeedPaginationQuery":   "26527780253581396",
-	"GroupsCometLeftRailContainerQuery":          "31152611061018930",
-	"GroupsCometJoinsRootQuery":                   "24648931168042404",
-	"GroupsCometDiscoverContentQuery":            "25947833531582461",
-	"GroupsCometCreateRootQuery":                 "26545572188428154",
-	"GroupsCometSettingMenuQuery":                "9746765062081053",
-	"GroupsCometMoreActionMenuQuery":             "26476435205301604",
-	"GroupsCometEntityMenuEmbeddedRootQuery":     "26566099453080408",
-	"GroupsCometRecAffordanceSectionQuery":       "26227921180209081",
-	"GroupsCometGroupRuleEntityDialogQuery":      "25942555452109877",
-	"GroupsCometHeaderInviteMenuQuery":           "34670067305939872",
+	"GroupsCometCrossGroupFeedContainerQuery":            "26735348219462271",
+	"GroupsCometCrossGroupFeedPaginationQuery":           "26527780253581396",
+	"GroupsCometLeftRailContainerQuery":                  "31152611061018930",
+	"GroupsCometJoinsRootQuery":                          "24648931168042404",
+	"GroupsCometDiscoverContentQuery":                    "25947833531582461",
+	"GroupsCometCreateRootQuery":                         "26545572188428154",
+	"GroupsCometSettingMenuQuery":                        "9746765062081053",
+	"GroupsCometMoreActionMenuQuery":                     "26476435205301604",
+	"GroupsCometEntityMenuEmbeddedRootQuery":             "26566099453080408",
+	"GroupsCometRecAffordanceSectionQuery":               "26227921180209081",
+	"GroupsCometGroupRuleEntityDialogQuery":              "25942555452109877",
+	"GroupsCometHeaderInviteMenuQuery":                   "34670067305939872",
 	"GroupsCometMembershipQuestionsPreloadedDialogQuery": "26323827953971452",
 
 	// Groups — pagination & joined
-	"GroupsCometAllJoinedGroupsSectionPaginationQuery":  "9974006939348139",
-	"GroupsCometPendingGroupJoinsSectionPaginationQuery": "9924911067556167",
-	"GroupsCometCategoriesSectionCategoriesRefetchQuery": "26179397388389630",
+	"GroupsCometAllJoinedGroupsSectionPaginationQuery":        "9974006939348139",
+	"GroupsCometPendingGroupJoinsSectionPaginationQuery":      "9924911067556167",
+	"GroupsCometCategoriesSectionCategoriesRefetchQuery":      "26179397388389630",
 	"GroupsCometCategoriesSectionMoreSuggestionsRefetchQuery": "24774907385540983",
-	"GroupsLeftRailYourGroupsPaginatedQuery":            "9658982227546884",
-	"GroupsLeftRailGroupsYouManagePaginatedQuery":       "10000015690112057",
+	"GroupsLeftRailYourGroupsPaginatedQuery":                  "9658982227546884",
+	"GroupsLeftRailGroupsYouManagePaginatedQuery":             "10000015690112057",
 
 	// Feed & posts
-	"CometModernHomeFeedQuery":                   "35430709819853581",
-	"CometSinglePostDialogContentQuery":          "26485835561067485",
-	"CometFeedStoryMenuQuery":                    "26578139061874750",
-	"CometFeedInlineComposerQuery":               "26472956975672575",
-	"ProfileCometComposerRootQuery":              "26292641347064220",
-	"ProfileCometTimelineFeedQuery":              "26484140144542166",
+	"CometModernHomeFeedQuery":          "35430709819853581",
+	"CometSinglePostDialogContentQuery": "26485835561067485",
+	"CometFeedStoryMenuQuery":           "26578139061874750",
+	"CometFeedInlineComposerQuery":      "26472956975672575",
+	"ProfileCometComposerRootQuery":     "26292641347064220",
+	"ProfileCometTimelineFeedQuery":     "26484140144542166",
 
 	// Comments & reactions queries (mutations are below)
-	"CometUFICommentRefetchQuery":                "26577964715169700",
-	"CometUFICommentMenuQuery":                   "26230165949984969",
-	"CometUFIReactionsDialogQuery":               "33437545572555426",
+	"CometUFICommentRefetchQuery":  "26577964715169700",
+	"CometUFICommentMenuQuery":     "26230165949984969",
+	"CometUFIReactionsDialogQuery": "33437545572555426",
 	// Alias used by GetPostComments
-	"CommentsListComponentPaginationQuery":       "26577964715169700",
+	"CommentsListComponentPaginationQuery": "26577964715169700",
 
 	// Groups — utility
-	"GroupsCometUFIAnonActorSwitcherMenuQuery":    "25736011312767229",
+	"GroupsCometUFIAnonActorSwitcherMenuQuery": "25736011312767229",
 
 	// Search
-	"CometSearchKeywordDataSourceQuery":           "34279758474973265",
-	"SearchCometResultsInitialResultsQuery":       "35435103342769591",
+	"CometSearchKeywordDataSourceQuery":     "34279758474973265",
+	"SearchCometResultsInitialResultsQuery": "35435103342769591",
 
 	// Group detail & members
-	"GroupsCometDiscussionLayoutRootQuery":         "26595005356798382",
-	"GroupsCometDiscussionRootQuery":               "26867841739523736",
-	"GroupsCometMembersRootQuery":                  "26328488663483009",
-	"CometGroupRootQuery":                          "26675395318752468",
+	"GroupsCometDiscussionLayoutRootQuery": "26595005356798382",
+	"GroupsCometDiscussionRootQuery":       "26867841739523736",
+	"GroupsCometMembersRootQuery":          "26328488663483009",
+	"CometGroupRootQuery":                  "26675395318752468",
 
 	// Membership questions (gated groups)
-	"GroupsCometParticipationQuestionsDialogQuery":      "27243898798531316",
-	"GroupsCometRequestToParticipateOnJoinDialogQuery":  "27505387249060985",
+	"GroupsCometParticipationQuestionsDialogQuery":     "27243898798531316",
+	"GroupsCometRequestToParticipateOnJoinDialogQuery": "27505387249060985",
 
 	// Single-group feed (posts from one specific group)
-	"CometGroupDiscussionRootSuccessQuery":              "26867841739523736",
+	"CometGroupDiscussionRootSuccessQuery": "26867841739523736",
 
 	// Mutations — groups (verified live via JS bundle harvest 2026-04-20)
-	"useGroupRequestToJoinMutation":                "25864060869939410",
-	"useGroupLeaveMutation":                        "34892951610348516",
-	"useGroupsCometCreateMutation":                 "26410639795238208",
-	"useGroupsCometFollowMutation":                 "23954755464142194",
-	"useGroupsCometUnfollowMutation":               "9558102717592331",
-	"useGroupsCometVisitMutation":                  "26506406622322884",
-	"useGroupHideSuggestionMutation":               "9454440231347992",
+	"useGroupRequestToJoinMutation":  "25864060869939410",
+	"useGroupLeaveMutation":          "34892951610348516",
+	"useGroupsCometCreateMutation":   "26410639795238208",
+	"useGroupsCometFollowMutation":   "23954755464142194",
+	"useGroupsCometUnfollowMutation": "9558102717592331",
+	"useGroupsCometVisitMutation":    "26506406622322884",
+	"useGroupHideSuggestionMutation": "9454440231347992",
 
 	// Mutations — posts & comments (verified live)
-	"GroupCometComposerCreateDialogQuery":           "27499428346323949",
-	"GroupsCometInlineComposerRendererUpdateQuery":  "26422734134060146",
-	"ComposerStoryCreateMutation":                   "25879074401770690",
-	"ComposerStoryEditMutation":                     "26629276700039334",
-	"useCometUFICreateCommentMutation":              "26608664635429703",
-	"CometUFIFeedbackReactMutation":                 "34892649590379796",
-	"ReelComposerReelPublishMutation":               "24143317328587698",
-	"VideoComposerVideoPublishingMutation":          "29705123342436060",
+	"GroupCometComposerCreateDialogQuery":          "27499428346323949",
+	"GroupsCometInlineComposerRendererUpdateQuery": "26422734134060146",
+	"ComposerStoryCreateMutation":                  "25879074401770690",
+	"ComposerStoryEditMutation":                    "26629276700039334",
+	"useCometUFICreateCommentMutation":             "26608664635429703",
+	"CometUFIFeedbackReactMutation":                "34892649590379796",
+	"ReelComposerReelPublishMutation":              "24143317328587698",
+	"VideoComposerVideoPublishingMutation":         "29705123342436060",
 
 	// Feed pagination (group-specific)
 	"GroupsCometFeedRegularStoriesPaginationQuery":  "26577462205242925",
@@ -150,7 +150,7 @@ func New(cookies Cookies, opts ...Option) (*Client, error) {
 		maxRetries: defaultMaxRetries,
 		retryBase:  defaultRetryBase,
 		minGap:     defaultMinGap,
-		session: &sessionState{},
+		session:    &sessionState{},
 	}
 
 	for _, o := range opts {

@@ -30,12 +30,12 @@ func (c *Client) CreatePost(ctx context.Context, groupID, message string, opts .
 		Ranges []textRange `json:"ranges"`
 	}
 	type postInput struct {
-		ComposerType    string         `json:"composer_type"`
-		ComposerContext composerContext `json:"composer_context"`
-		Message         messageInput   `json:"message"`
-		ActorID         string         `json:"actor_id"`
-		ClientMutationID string        `json:"client_mutation_id"`
-		AttachmentURL   string         `json:"attachment_url,omitempty"`
+		ComposerType     string          `json:"composer_type"`
+		ComposerContext  composerContext `json:"composer_context"`
+		Message          messageInput    `json:"message"`
+		ActorID          string          `json:"actor_id"`
+		ClientMutationID string          `json:"client_mutation_id"`
+		AttachmentURL    string          `json:"attachment_url,omitempty"`
 	}
 	type variables struct {
 		Input postInput `json:"input"`

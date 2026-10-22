@@ -79,19 +79,35 @@ func (c *Client) doGraphQLRaw(ctx context.Context, friendlyName, docID string, v
 	req64 := strconv.FormatUint(c.reqCounter.Add(1), 16)
 
 	form := url.Values{}
-	form.Set("av", c.cookies.CUser); form.Set("__user", c.cookies.CUser)
-	form.Set("__a", "1"); form.Set("__req", req64); form.Set("__hs", hs)
-	form.Set("dpr", "2"); form.Set("__ccg", "EXCELLENT"); form.Set("__rev", rev)
-	if spinS != "" { form.Set("__s", spinS) }
-	form.Set("__hsi", hsi); form.Set("__comet_req", "15")
-	form.Set("fb_dtsg", dtsg); form.Set("jazoest", jazoest); form.Set("lsd", lsd)
-	form.Set("__spin_r", rev); form.Set("__spin_b", "trunk"); form.Set("__spin_t", spinT)
-	form.Set("server_timestamps", "true"); form.Set("fb_api_caller_class", "RelayModern")
+	form.Set("av", c.cookies.CUser)
+	form.Set("__user", c.cookies.CUser)
+	form.Set("__a", "1")
+	form.Set("__req", req64)
+	form.Set("__hs", hs)
+	form.Set("dpr", "2")
+	form.Set("__ccg", "EXCELLENT")
+	form.Set("__rev", rev)
+	if spinS != "" {
+		form.Set("__s", spinS)
+	}
+	form.Set("__hsi", hsi)
+	form.Set("__comet_req", "15")
+	form.Set("fb_dtsg", dtsg)
+	form.Set("jazoest", jazoest)
+	form.Set("lsd", lsd)
+	form.Set("__spin_r", rev)
+	form.Set("__spin_b", "trunk")
+	form.Set("__spin_t", spinT)
+	form.Set("server_timestamps", "true")
+	form.Set("fb_api_caller_class", "RelayModern")
 	form.Set("fb_api_req_friendly_name", friendlyName)
-	form.Set("variables", string(varsJSON)); form.Set("doc_id", docID)
+	form.Set("variables", string(varsJSON))
+	form.Set("doc_id", docID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, graphqlEndpoint, strings.NewReader(form.Encode()))
-	if err != nil { return nil, fmt.Errorf("%w: building request: %v", ErrRequestFailed, err) }
+	if err != nil {
+		return nil, fmt.Errorf("%w: building request: %v", ErrRequestFailed, err)
+	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	c.setRequestHeaders(req, friendlyName, lsd)
 	req.Header.Set("Sec-Ch-Ua-Platform", `"macOS"`)
@@ -99,15 +115,20 @@ func (c *Client) doGraphQLRaw(ctx context.Context, friendlyName, docID string, v
 	req.Header.Set("Sec-Ch-Ua-Mobile", "?0")
 
 	resp, err := c.httpClient.Do(req)
-	if err != nil { return nil, fmt.Errorf("%w: %v", ErrRequestFailed, err) }
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrRequestFailed, err)
+	}
 	defer resp.Body.Close()
 
 	c.updateRateLimit(resp.Header)
 	switch {
 	case resp.StatusCode == http.StatusOK:
-	case resp.StatusCode == http.StatusUnauthorized: return nil, ErrSessionExpired
-	case resp.StatusCode == http.StatusForbidden: return nil, ErrForbidden
-	case resp.StatusCode == http.StatusNotFound: return nil, ErrNotFound
+	case resp.StatusCode == http.StatusUnauthorized:
+		return nil, ErrSessionExpired
+	case resp.StatusCode == http.StatusForbidden:
+		return nil, ErrForbidden
+	case resp.StatusCode == http.StatusNotFound:
+		return nil, ErrNotFound
 	case resp.StatusCode == http.StatusTooManyRequests:
 		wait := parseRetryAfter(resp.Header.Get("Retry-After"), 60*time.Second)
 		c.rlMu.Lock()
@@ -123,12 +144,16 @@ func (c *Client) doGraphQLRaw(ctx context.Context, friendlyName, docID string, v
 		}
 		c.gapMu.Unlock()
 		return nil, fmt.Errorf("%w: retry after %s", ErrRateLimited, wait)
-	case resp.StatusCode >= 500: return nil, fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)
-	default: return nil, fmt.Errorf("%w: unexpected HTTP %d", ErrRequestFailed, resp.StatusCode)
+	case resp.StatusCode >= 500:
+		return nil, fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)
+	default:
+		return nil, fmt.Errorf("%w: unexpected HTTP %d", ErrRequestFailed, resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
-	if err != nil { return nil, fmt.Errorf("%w: reading body: %v", ErrRequestFailed, err) }
+	if err != nil {
+		return nil, fmt.Errorf("%w: reading body: %v", ErrRequestFailed, err)
+	}
 	return stripFBPrefix(body), nil
 }
 

@@ -172,11 +172,11 @@ func (g *fbGroup) toGroup() Group {
 
 // fbGroupSearchResult is the lightweight shape used in search / discover lists.
 type fbGroupSearchResult struct {
-	ID          string        `json:"id"`
-	Name        string        `json:"name"`
-	URL         string        `json:"url"`
-	MemberCount int           `json:"member_count"`
-	PrivacyInfo fbPrivacyInfo `json:"privacy_info"`
+	ID             string        `json:"id"`
+	Name           string        `json:"name"`
+	URL            string        `json:"url"`
+	MemberCount    int           `json:"member_count"`
+	PrivacyInfo    fbPrivacyInfo `json:"privacy_info"`
 	ProfilePicture *struct {
 		URI string `json:"uri"`
 	} `json:"profile_picture"`
@@ -310,7 +310,7 @@ type participationQuestionsData struct {
 		CommunityParticipationQuestions []fbQuestion `json:"community_participation_questions"`
 		MembershipQuestions             []fbQuestion `json:"membership_questions"`
 		ViewerForumJoinState            string       `json:"viewer_forum_join_state"`
-		ProfilePicture *struct {
+		ProfilePicture                  *struct {
 			URI string `json:"uri"`
 		} `json:"profile_picture"`
 		GroupSnippets *struct {
@@ -324,7 +324,7 @@ type participationQuestionsData struct {
 }
 
 type fbQuestion struct {
-	ID       string `json:"id"`
+	ID       string  `json:"id"`
 	Question *fbText `json:"question_title"`
 	// Some responses use "title" or "text" directly
 	TitleText string `json:"title"`
@@ -392,12 +392,12 @@ type singleFeedEdge struct {
 }
 
 type singleFeedNode struct {
-	Typename string      `json:"__typename"`
-	ID       string      `json:"id"`
-	PostID   string      `json:"post_id"`
-	Feedback *fbFeedback `json:"feedback"`
-	Message  *fbText     `json:"message"`
-	CreationTime int64   `json:"creation_time"`
+	Typename     string      `json:"__typename"`
+	ID           string      `json:"id"`
+	PostID       string      `json:"post_id"`
+	Feedback     *fbFeedback `json:"feedback"`
+	Message      *fbText     `json:"message"`
+	CreationTime int64       `json:"creation_time"`
 }
 
 func (d *singleFeedData) toFeedPage() FeedPage {
@@ -579,10 +579,10 @@ type crossFeedEdge struct {
 }
 
 type crossFeedNode struct {
-	Typename string      `json:"__typename"`
-	ID       string      `json:"id"`
-	PostID   string      `json:"post_id"`
-	Feedback *fbFeedback `json:"feedback"`
+	Typename    string         `json:"__typename"`
+	ID          string         `json:"id"`
+	PostID      string         `json:"post_id"`
+	Feedback    *fbFeedback    `json:"feedback"`
 	Attachments []fbAttachment `json:"attachments"`
 }
 
@@ -597,7 +597,7 @@ func (d *feedData) toFeedPage() FeedPage {
 			continue
 		}
 		p := Post{
-			ID:     e.Node.PostID,
+			ID: e.Node.PostID,
 		}
 		if p.ID == "" {
 			p.ID = e.Node.ID

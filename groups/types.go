@@ -36,13 +36,13 @@ func (r RateLimitState) ResetIn() time.Duration {
 // All six fields are required for full write access. xs and CUser are the
 // most critical — the others strengthen fingerprint matching.
 type Cookies struct {
-	SB   string // sb: browser session fingerprint
-	DATR string // datr: device auth token
+	SB    string // sb: browser session fingerprint
+	DATR  string // datr: device auth token
 	CUser string // c_user: the authenticated user ID (also used as __user in every request)
-	XS   string // xs: session token — the primary auth credential
-	FR   string // fr: friend-request + ad-tracking token
-	PSL  string // ps_l: presence/status
-	PSN  string // ps_n: presence/status (secondary)
+	XS    string // xs: session token — the primary auth credential
+	FR    string // fr: friend-request + ad-tracking token
+	PSL   string // ps_l: presence/status
+	PSN   string // ps_n: presence/status (secondary)
 }
 
 // Privacy is the visibility level of a Facebook Group.
@@ -162,7 +162,7 @@ type CreateGroupParams struct {
 type MembershipQuestion struct {
 	ID       string   `json:"id"`
 	Text     string   `json:"text"`
-	Type     string   `json:"type"`     // OPEN_ENDED, MULTIPLE_CHOICE
+	Type     string   `json:"type"` // OPEN_ENDED, MULTIPLE_CHOICE
 	Required bool     `json:"required"`
 	Options  []string `json:"options,omitempty"` // populated for MULTIPLE_CHOICE
 }
@@ -178,13 +178,13 @@ type MembershipAnswer struct {
 
 // TrendReport is the output of ScrapeGroupTrends.
 type TrendReport struct {
-	GroupID        string          `json:"groupId"`
-	PostsAnalyzed  int             `json:"postsAnalyzed"`
-	TopKeywords    []KeywordFreq   `json:"topKeywords"`
-	TopHashtags    []KeywordFreq   `json:"topHashtags"`
-	AvgEngagement  float64         `json:"avgEngagement"`
-	PeakHours      []int           `json:"peakHours"`
-	SentimentScore float64         `json:"sentimentScore"`
+	GroupID        string           `json:"groupId"`
+	PostsAnalyzed  int              `json:"postsAnalyzed"`
+	TopKeywords    []KeywordFreq    `json:"topKeywords"`
+	TopHashtags    []KeywordFreq    `json:"topHashtags"`
+	AvgEngagement  float64          `json:"avgEngagement"`
+	PeakHours      []int            `json:"peakHours"`
+	SentimentScore float64          `json:"sentimentScore"`
 	ActiveAuthors  []AuthorActivity `json:"activeAuthors"`
 }
 

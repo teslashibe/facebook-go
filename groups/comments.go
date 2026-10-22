@@ -62,13 +62,13 @@ func (c *Client) CreateComment(ctx context.Context, feedbackID, message string) 
 		Text string `json:"text"`
 	}
 	type commentInput struct {
-		FeedbackID       string       `json:"feedback_id"`
-		Message          messageInput `json:"message"`
-		ActorID          string       `json:"actor_id"`
-		ClientMutationID string       `json:"client_mutation_id"`
-		FeedbackSource   string       `json:"feedback_source"`
-		IsTrackingEncrypted bool      `json:"is_tracking_encrypted"`
-		Tracking         string       `json:"tracking"`
+		FeedbackID          string       `json:"feedback_id"`
+		Message             messageInput `json:"message"`
+		ActorID             string       `json:"actor_id"`
+		ClientMutationID    string       `json:"client_mutation_id"`
+		FeedbackSource      string       `json:"feedback_source"`
+		IsTrackingEncrypted bool         `json:"is_tracking_encrypted"`
+		Tracking            string       `json:"tracking"`
 	}
 	type variables struct {
 		Input commentInput `json:"input"`
@@ -116,9 +116,9 @@ func (c *Client) ReactToPost(ctx context.Context, feedbackID string, reaction Re
 		ClientMutationID string `json:"client_mutation_id"`
 	}
 	type variables struct {
-		Input          reactInput `json:"input"`
-		UseDefaultActor bool      `json:"useDefaultActor"`
-		Scale          int        `json:"scale"`
+		Input           reactInput `json:"input"`
+		UseDefaultActor bool       `json:"useDefaultActor"`
+		Scale           int        `json:"scale"`
 	}
 
 	raw, err := c.graphql(ctx, "CometUFIFeedbackReactMutation", variables{

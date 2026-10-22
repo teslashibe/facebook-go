@@ -19,8 +19,8 @@ func (c *Client) SearchGroups(ctx context.Context, query string, opts ...SearchO
 	}
 
 	vars := mergeVars(map[string]interface{}{
-		"count":            so.limit,
-		"allow_streaming":  false,
+		"count":           so.limit,
+		"allow_streaming": false,
 		"args": map[string]interface{}{
 			"callsite": "COMET_GLOBAL_SEARCH",
 			"config": map[string]interface{}{
@@ -38,17 +38,17 @@ func (c *Client) SearchGroups(ctx context.Context, query string, opts ...SearchO
 			"filters": []interface{}{},
 			"text":    query,
 		},
-		"cursor":                     nil,
-		"feedLocation":               "SEARCH",
-		"feedbackSource":             23,
-		"fetch_filters":              true,
-		"focusCommentID":             nil,
-		"locale":                     nil,
+		"cursor":                        nil,
+		"feedLocation":                  "SEARCH",
+		"feedbackSource":                23,
+		"fetch_filters":                 true,
+		"focusCommentID":                nil,
+		"locale":                        nil,
 		"privacySelectorRenderLocation": "COMET_STREAM",
-		"renderLocation":             "search_results_page",
-		"scale":                      2,
-		"stream_initial_count":       0,
-		"useDefaultActor":            false,
+		"renderLocation":                "search_results_page",
+		"scale":                         2,
+		"stream_initial_count":          0,
+		"useDefaultActor":               false,
 	})
 
 	raw, err := c.graphql(ctx, "SearchCometResultsInitialResultsQuery", vars)
@@ -201,9 +201,9 @@ func (c *Client) LeaveGroup(ctx context.Context, groupID string) error {
 	}
 
 	type variables struct {
-		GroupID                  string `json:"groupID"`
-		Source                   string `json:"source"`
-		RevokeJoinRequestIfPending bool `json:"revokeJoinRequestIfPending"`
+		GroupID                    string `json:"groupID"`
+		Source                     string `json:"source"`
+		RevokeJoinRequestIfPending bool   `json:"revokeJoinRequestIfPending"`
 	}
 
 	raw, err := c.graphql(ctx, "useGroupLeaveMutation", map[string]interface{}{

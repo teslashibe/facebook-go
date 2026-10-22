@@ -14,13 +14,13 @@ func (c *Client) GetGroupFeed(ctx context.Context, groupID string) (FeedPage, er
 	}
 
 	vars := mergeVars(map[string]interface{}{
-		"feedLocation":                    "GROUP",
-		"feedbackSource":                  69,
-		"focusCommentID":                  nil,
-		"privacySelectorRenderLocation":   "COMET_STREAM",
-		"renderLocation":                  "groups_tab",
-		"scale":                           2,
-		"suppress_xac_groups":             false,
+		"feedLocation":                  "GROUP",
+		"feedbackSource":                69,
+		"focusCommentID":                nil,
+		"privacySelectorRenderLocation": "COMET_STREAM",
+		"renderLocation":                "groups_tab",
+		"scale":                         2,
+		"suppress_xac_groups":           false,
 	})
 
 	raw, err := c.graphql(ctx, "GroupsCometCrossGroupFeedContainerQuery", vars)
@@ -92,27 +92,27 @@ func (c *Client) GetGroupPosts(ctx context.Context, groupID string) (FeedPage, e
 	}
 
 	vars := mergeVars(map[string]interface{}{
-		"autoOpenChat":                  false,
-		"creative_provider_id":          nil,
-		"feedbackSource":                0,
-		"feedLocation":                  "GROUP",
-		"feedType":                      "DISCUSSION",
-		"filter_topic_id":               nil,
-		"focusCommentID":                nil,
-		"groupID":                       groupID,
-		"hasHoistStories":               false,
-		"hoistedSectionHeaderType":      "notifications",
-		"hoistStories":                  []interface{}{},
-		"hoistStoriesCount":             0,
-		"privacySelectorRenderLocation": "COMET_STREAM",
-		"regular_stories_count":         3,
+		"autoOpenChat":                         false,
+		"creative_provider_id":                 nil,
+		"feedbackSource":                       0,
+		"feedLocation":                         "GROUP",
+		"feedType":                             "DISCUSSION",
+		"filter_topic_id":                      nil,
+		"focusCommentID":                       nil,
+		"groupID":                              groupID,
+		"hasHoistStories":                      false,
+		"hoistedSectionHeaderType":             "notifications",
+		"hoistStories":                         []interface{}{},
+		"hoistStoriesCount":                    0,
+		"privacySelectorRenderLocation":        "COMET_STREAM",
+		"regular_stories_count":                3,
 		"regular_stories_stream_initial_count": 3,
-		"renderLocation":                "group",
-		"scale":                         2,
-		"shouldDeferMainFeed":           false,
-		"sortingSetting":                "TOP_POSTS",
-		"threadID":                      "",
-		"useDefaultActor":               false,
+		"renderLocation":                       "group",
+		"scale":                                2,
+		"shouldDeferMainFeed":                  false,
+		"sortingSetting":                       "TOP_POSTS",
+		"threadID":                             "",
+		"useDefaultActor":                      false,
 	})
 
 	raw, err := c.graphql(ctx, "CometGroupDiscussionRootSuccessQuery", vars)
@@ -135,14 +135,14 @@ func (c *Client) GetPost(ctx context.Context, postID string) (*Post, error) {
 	}
 
 	vars := mergeVars(map[string]interface{}{
-		"storyID":          postID,
-		"hashtag":          "",
-		"useDefaultActor":  false,
-		"feedbackSource":   2,
-		"focusCommentID":   nil,
+		"storyID":                       postID,
+		"hashtag":                       "",
+		"useDefaultActor":               false,
+		"feedbackSource":                2,
+		"focusCommentID":                nil,
 		"privacySelectorRenderLocation": "COMET_STREAM",
-		"renderLocation":   "permalink",
-		"scale":            2,
+		"renderLocation":                "permalink",
+		"scale":                         2,
 	})
 
 	raw, err := c.graphql(ctx, "CometSinglePostDialogContentQuery", vars)
